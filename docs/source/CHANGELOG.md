@@ -1,5 +1,9 @@
 # CHANGELOG
 
+Unreleased
+
+- Use the Boolean modifier's EXACT solver in `populate.apply_cutter`, so degenerate cutter geometry can no longer hang a populate worker silently instead of raising (harvested from folouiseAWS/infinigen, upstream PR #498).
+
 v2.0.0a3
 
 **Scenes**
