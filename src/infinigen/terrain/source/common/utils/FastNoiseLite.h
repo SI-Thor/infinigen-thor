@@ -52,6 +52,8 @@
 #define FASTNOISELITE_H
 
 #include <cmath>
+#include <cstddef>
+#include <cassert>
 
 
 enum CellularDistanceFunction
