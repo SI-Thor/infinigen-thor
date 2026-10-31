@@ -70,11 +70,12 @@ b0b77d8a  thor/: measure the box instead of arguing about it - probe-thor.sh and
 | added | +60 | `thor/README.md` |
 | added | +57 | `thor/experiments/receipts/toy-coin-receipt.json` |
 | added | +37 | `thor/patches/blender-v4.2.0-oidn-arm64-cpu-only.patch` |
-| added | +28 | `thor/patches/infinigen2-denoise-fallback.patch` |
 
 **Total: +3,536 / −2 across 18 files.** The only change to Infinigen's own
-source is the `render_cycles.py` denoiser fallback; everything else is under
-`thor/`.
+source is `infinigen2/util/hardware_info.py` — the GPU-detection fix, which
+has a test (`tests/infinigen2/util/test_hardware_info.py`); everything else is
+under `thor/`. An earlier draft also carried a `render_cycles.py` denoiser
+fallback; **it has been removed** — a missing denoiser must fail loudly.
 
 ### Files deliberately NOT in the PR
 
@@ -221,6 +222,8 @@ committed there. **Deliver in the same turn the files are built.**
 4. **L3** — close the loop: `‖A(G(y)) − y‖` per frame over a sequence, plot the
    drift. Nobody has published this.
 5. **L4** — measure `I(x;y)` on the Infinigen distribution, per modality.
-6. Apply `patch-infinigen2-denoise-fallback.patch` and fix
+6. Build the OIDN in (`WITH_OPENIMAGEDENOISE=ON` +
+   `blender-v4.2.0-oidn-arm64-cpu-only.patch`) — the denoiser's raise in
+   `render_cycles.py` is correct and stays — and fix
    `infinigen2/util/hardware_info.py` GPU detection (`--query-gpu=name,compute_cap`
    + `nvidia-smi soc -q`).

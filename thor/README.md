@@ -11,7 +11,6 @@
 | `probe-thor.sh` | The team's pipeline **gate** (from `thor-spike`): PASS/FAIL per capability over the venv — cuda, umem, nvcc-arch, denoiser, cycles, sm_110 SASS. Exits non-zero on a missing capability. |
 | `probe-thor-receipts.sh` | The **measurement** probe: a written receipt per probe, covering the five things the gate does not — `libnvoptix.so` in the driver, `nvidia-smi soc -q`, `NVCC_APPEND_FLAGS`, the storage substrate (fuseblk/USB), and host-malloc device-addressability. |
 | `thor-env.sh` | `source` it: `NVCC_APPEND_FLAGS=-arch=sm_110` and the NVMe toolchain paths, in one place. |
-| `patch-infinigen2-denoise-fallback.patch` | 3-line fix to Infinigen 2.0: warn and continue when no denoiser exists, instead of `raise RuntimeError`. **Unblocks the 2.0 pipeline tonight, with no bpy rebuild.** |
 | `build-bpy.sh` | Updated `thor/build-bpy.sh`: corrected OptiX rationale, **denoiser enabled**, and a smoke test that *asserts* a denoiser exists. |
 | `blender-v4.2.0-oidn-arm64-cpu-only.patch` | Patches Blender 4.2's `openimagedenoise.cmake` so OIDN builds CPU-only on aarch64. Verified `git apply --check` against `blender/blender@v4.2.0`. |
 | `SPIKE.md` | The box assumptions `build-bpy.sh` has referenced since day one — plus the fuseblk incident that just cost a 30-minute run. |
@@ -42,8 +41,10 @@
    Design against *capacity and CUDA throughput*, not the 2,070 TFLOPS FP4 headline
    (measured no on this stack).
 3. **The build has no denoiser and Infinigen 2.0 hard-fails without one.**
-   `render_cycles.py` raises rather than degrades; 1.x only warns. But the cheap fix is
-   a **3-line patch**, not an OIDN build: `patch-infinigen2-denoise-fallback.patch`.
+   `render_cycles.py` raises rather than degrades; 1.x only warns. The raise is
+   **correct** — a box with no denoiser is a box whose build is wrong — so the fix is
+   the **OIDN build** (`blender-v4.2.0-oidn-arm64-cpu-only.patch`, `WITH_OPENIMAGEDENOISE=ON`),
+   not a patch that turns the failure into a warning.
 4. **GPU detection asks for the name and the memory in one query.**
    `infinigen2/util/hardware_info.py` calls `nvidia-smi --query-gpu=name,memory.total`.
    On a unified-memory device (`memory.total` → `[N/A]`) the entry is malformed,

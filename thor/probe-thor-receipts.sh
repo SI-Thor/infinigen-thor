@@ -267,8 +267,9 @@ PYEOF
   if grep -q "denoiser .* -> AVAILABLE" "$LOG"; then
     ok "a Cycles denoiser is available in this wheel"
   else
-    fail "NO denoiser in this wheel - Infinigen 2.0 render_cycles.py will raise RuntimeError('No usable denoiser')"
-    info "  fix now, no rebuild: thor/patch-infinigen2-denoise-fallback.patch"
+    fail "NO denoiser in this wheel - Infinigen 2.0 render_cycles.py raises RuntimeError('No usable denoiser'), and that is correct"
+    info "  fix: build the OIDN in - WITH_OPENIMAGEDENOISE=ON plus thor/patches/blender-v4.2.0-oidn-arm64-cpu-only.patch"
+    info "  a missing denoiser must fail loudly; do not patch the renderer to warn"
   fi
   if grep -q "device types = \['CUDA'" "$LOG"; then
     ok "Cycles exposes CUDA (expected on Thor: no RT cores -> no OPTIX device)"
