@@ -4,7 +4,9 @@
 
 | file | what it is |
 |---|---|
-| **`THOR-EXPLOITS.md`** | **Start here.** Nine doors that are already unlocked, ordered by time saved, each with its fix. |
+| **`THOR-MAKING-NOT-CONSUMING.md`** | **Start here for the research.** Perception and generation are two readings of one score field — and the naive closed-loop objective certifies physically impossible worlds. **All the mathematics is measured, with receipts** (`thor/experiments/receipts/`). |
+| **`experiments/`** | Four scripts, **numpy only** — no torch, no GPU, no dataset. A claim that needs a GPU is not yet a claim. Each carries a control that can fail, and each of them did fail during development. |
+| **`THOR-EXPLOITS.md`** | Nine doors that are already unlocked, ordered by time saved, each with its fix. |
 | `THOR-ARCHITECTURE.md` | The background: what the port actually is, the Thor's real hardware envelope, the compute map, six blockers ranked by leverage. |
 | `probe-thor.sh` | Runs on the Thor. Measures GPU visibility, `libnvoptix.so`, the storage substrate, nvcc's default arch, unified memory, the wheel's device types and denoisers, terrain SASS arch. Exits non-zero on a missing capability. |
 | `thor-env.sh` | `source` it: `NVCC_APPEND_FLAGS=-arch=sm_110` and the NVMe toolchain paths, in one place. |
@@ -13,7 +15,21 @@
 | `blender-v4.2.0-oidn-arm64-cpu-only.patch` | Patches Blender 4.2's `openimagedenoise.cmake` so OIDN builds CPU-only on aarch64. Verified `git apply --check` against `blender/blender@v4.2.0`. |
 | `SPIKE.md` | The box assumptions `build-bpy.sh` has referenced since day one — plus the fuseblk incident that just cost a 30-minute run. |
 
-## The five things that matter most
+## The three things that matter most
+
+0. **The naive closed-loop objective is degenerate, and it is measured.**
+   `‖A(G(y)) − y‖` alone pins the generator *somewhere* on the fiber
+   `F(y) = {x : A(x) = y}` and says nothing about *which* point. A
+   deterministic inverse trained on it converges to the **centre of the
+   fiber** — a point that satisfies the measurement and exists in no scene.
+   Measured: pixel distillation is **11x** off-manifold at a *perfect* round
+   trip; consistency-only is **19x** off-manifold with an even *better* round
+   trip. **A consistency-only critic passes every frame of both.** The fix is
+   a second term — the prior's plausibility — and the two must be balanced in
+   gradient scale (measured: 4.4e-5 apart). And only a **stochastic**
+   generator can be plausible and consistent at once, which makes the
+   fiber-width gate a **necessity**, not an optimisation.
+
 
 1. **`main` is byte-identical to upstream** (`princeton-vl/Infinigen`, SHA `224598d4`).
    The port is 6 commits of build infrastructure; **not one line of Infinigen's Python
