@@ -1,0 +1,28 @@
+diff --git a/src/infinigen2/exporters/render_cycles.py b/src/infinigen2/exporters/render_cycles.py
+--- a/src/infinigen2/exporters/render_cycles.py
++++ b/src/infinigen2/exporters/render_cycles.py
+@@ -269,9 +269,22 @@
+         _DENOISER_PREFERENCE if denoise_mode == DenoiseMode.BEST else (denoise_mode,)
+     )
+     if not any(_try_set_denoiser(m) for m in candidates):
+-        raise RuntimeError(
+-            f"No usable denoiser for {denoise_mode} (tried {candidates})"
++        # THOR: no denoiser in the build (OIDN off, OptiX needs the driver's
++        # libnvoptix.so). Failing the whole render here is the wrong trade on
++        # a box whose GPU is the scarce resource: Cycles can still produce the
++        # noisy pass - _autorender_filepath() falls back to ExportType.IMAGE
++        # when use_denoising is False - and the noise can be removed out of
++        # band (GPU denoiser, or a later OIDN build).
++        #
++        # If the caller genuinely requires a denoised pass, it must ask for
++        # one explicitly; that check belongs here, not as a blanket raise.
++        logger.warning(
++            "No usable denoiser for %s (tried %s); continuing with the noisy "
++            "pass - denoise out of band.",
++            denoise_mode,
++            candidates,
+         )
++        return False
+     logger.info(
+         f"Denoising on with {bpy.context.scene.cycles.denoiser!r} ({denoise_mode=})"
+     )

@@ -8,8 +8,36 @@
 # Infinigen pins bpy==4.2.0, so the only path is building the Python module
 # (WITH_PYTHON_MODULE) from source against CPython 3.11 (the Python Blender 4.2
 # embeds) with Cycles CUDA kernels for the Thor's Blackwell GPU (compute
-# capability 11.0 -> sm_110, CUDA 13.2 at /usr/local/cuda). OptiX has no
-# aarch64 SDK, so CUDA only.
+# capability 11.0 -> sm_110, CUDA 13.2 at /usr/local/cuda).
+#
+# WHY THERE IS NO OPTIX DEVICE (read before "fixing" it):
+#   The OptiX *SDK* does ship an ARM build - NVIDIA's download page lists
+#   "OptiX SDK 9.1 (Windows, Linux, Arm)" and the legacy page lists 8.1.0 as
+#   "(Windows, Linux, Arm)". The SDK is not the problem.
+#   The problem is the *hardware*: the Jetson AGX Thor T5000 has NO RT CORES.
+#   NVIDIA staff on the developer forum, 1 Sept 2025: "There is no RT cores in
+#   AGX T5000" - and the module datasheet's "Modern Graphics features: Ray
+#   Tracing" line was a datasheet bug ("This is a mistake in module data sheet.
+#   We will fix it."). Without RT cores the OptiX ray tracer has nothing to
+#   accelerate with, so the renderer stays on CUDA. This is a hardware fact and
+#   will not change with an SDK update.
+#   (The OptiX *denoiser* is a different animal - it runs on compute and does
+#   not need RT cores - but it needs libnvoptix.so from the driver, and Cycles
+#   only compiles the OptiX denoiser in when WITH_CYCLES_DEVICE_OPTIX is on.
+#   thor/probe-thor.sh checks whether the driver ships it.)
+#
+# DENOISER: WITH_OPENIMAGEDENOISE is now ON.
+#   Infinigen 2.0's src/infinigen2/exporters/render_cycles.py defaults to
+#   DenoiseMode.BEST and RAISES RuntimeError("No usable denoiser ...") when
+#   neither OPTIX nor OPENIMAGEDENOISE is available (1.x only warns). A 2.0
+#   render on the Thor as built dies instead of degrading.
+#   Blender 4.2 builds OIDN 2.3.0 FROM SOURCE (versions.cmake pins
+#   oidn-2.3.0.src.tar.gz), so there is no aarch64 package to find - the build
+#   does it. But upstream's openimagedenoise.cmake turns the SYCL, CUDA and
+#   HIP devices ON for every non-Windows-ARM platform, which cannot build on
+#   aarch64. thor/patches/blender-v4.2.0-oidn-arm64-cpu-only.patch forces the
+#   CPU device (OIDN 2.3.0 supports ARM64/NEON); set OIDN_DEVICE_CUDA_ARCH=110
+#   to build the CUDA device for sm_110 instead.
 #
 # Environment / box assumptions (see thor/SPIKE.md):
 #   - Ubuntu 24.04 (noble) aarch64, 14 cores, passwordless sudo for apt.
@@ -42,6 +70,11 @@ JOBS="${JOBS:-$(nproc)}"
 # Thor's Blackwell GPU is cc 11.0. CMake 3.28 accepts unknown numeric
 # architectures and passes them straight to nvcc (verified on this box).
 CUDA_ARCH="${CUDA_ARCH:-110}"
+# OIDN device: leave empty for the CPU device (NEON); set to 110 for the OIDN
+# CUDA device on sm_110. The OIDN CUDA device needs the same -arch discipline
+# as everything else on this box: nvcc's default target is sm_75 and those
+# cubins cannot load here.
+OIDN_DEVICE_CUDA_ARCH="${OIDN_DEVICE_CUDA_ARCH:-}"
 
 stage() { printf '\n=== [%s] %s (start %s)\n' "$(date +%H:%M:%S)" "$1" "$(date +%s)"; }
 log()   { echo "[build-bpy] $*"; }
@@ -52,8 +85,9 @@ ln -sfn "$EXT_DRIVE" "$EXT_LINK"
 # ---------------------------------------------------------------------------
 stage 0 "apt dependencies"
 # System-library build of Blender 4.2 (no vcpkg) + Infinigen's documented deps.
-# Not packaged in noble: OpenSubdiv is 'libosd-dev' (3.5), OIDN is absent
-# (WITH_OPENIMAGEDENOISE=OFF), USD is absent (WITH_USD=OFF).
+# Not packaged in noble: OpenSubdiv is 'libosd-dev' (3.5), USD is absent
+# (WITH_USD=OFF). OIDN is NOT in this list on purpose - Blender builds OIDN
+# 2.3.0 from source and noble's libtbb-dev covers its TBB dependency.
 APT_PKGS=(
   build-essential git cmake ninja-build gettext wget pkg-config
   libx11-dev libxxf86vm-dev libxcursor-dev libxi-dev libxrandr-dev
@@ -192,7 +226,8 @@ cmake -S "$BLENDER_SRC" -B "$BUILD_DIR" -G Ninja \
   -DWITH_CYCLES_DEVICE_OPTIX=OFF \
   -DWITH_CYCLES_DEVICE_HIP=OFF \
   -DWITH_CYCLES_DEVICE_ONEAPI=OFF \
-  -DWITH_OPENIMAGEDENOISE=OFF \
+  -DWITH_OPENIMAGEDENOISE=ON \
+  -DOIDN_DEVICE_CUDA_ARCH="$OIDN_DEVICE_CUDA_ARCH" \
   -DWITH_ALEMBIC=OFF \
   -DWITH_OPENCOLLADA=OFF \
   -DWITH_USD=OFF \
@@ -220,16 +255,36 @@ rm -rf "$SMOKE"; mkdir -p "$SMOKE"
 "$PY" -m venv "$SMOKE/venv"
 "$SMOKE/venv/bin/pip" -q install "$WHEEL_DIR"/bpy-*.whl
 "$SMOKE/venv/bin/python" - <<'EOF' 2>&1 | tee "$LOG_DIR/bpy-smoke.log"
-import bpy, time
+import bpy, time, sys
 print("bpy", bpy.app.version_string, "| build:", bpy.app.build_platform.decode())
 for dev in bpy.context.preferences.addons["cycles"].preferences.devices:
     print("cycles device:", dev.name, dev.type)
+# --- denoiser assertion -------------------------------------------------
+# Infinigen 2.0 raises RuntimeError("No usable denoiser ...") rather than
+# degrading, so a wheel that renders but cannot denoise is not usable by the
+# engine. Assert it here, on the box, every time the wheel is rebuilt.
+denoisers = {}
+for name in ("OPTIX", "OPENIMAGEDENOISE"):
+    try:
+        scene.cycles.denoiser = name
+        denoisers[name] = "AVAILABLE"
+    except Exception as e:
+        denoisers[name] = "UNAVAILABLE (%s)" % type(e).__name__
+print("denoisers:", denoisers)
+if not any(v == "AVAILABLE" for v in denoisers.values()):
+    print("SMOKE FAIL: no denoiser - Infinigen 2.0 render_cycles.py will raise")
+    sys.exit(2)
+usable = [k for k, v in denoisers.items() if v == "AVAILABLE"]
+scene.cycles.denoiser = usable[0]
+scene.cycles.use_denoising = True
+print("denoiser in use:", scene.cycles.denoiser)
+
 for device in ("CPU", "GPU"):
     scene = bpy.data.scenes["Scene"]
     scene.cycles.use_denoising = False  # OIDN is not available in this build
     scene.render.engine = "CYCLES"
     if device == "GPU":
-        # Prefer CUDA on the Thor (OptiX does not exist on aarch64).
+        # Prefer CUDA on the Thor (no RT cores -> no usable OptiX renderer).
         prefs = bpy.context.preferences.addons["cycles"].preferences
         prefs.compute_device_type = "CUDA"
         prefs.get_devices()
