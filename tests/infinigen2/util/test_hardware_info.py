@@ -137,8 +137,14 @@ class _fake_smi:
             exe.write_text(FAKE_SMI)
             exe.chmod(exe.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         self._saved = os.environ.get("PATH", "")
-        # An empty bin dir first, so the REAL nvidia-smi cannot be found.
-        os.environ["PATH"] = f"{self._bin}{os.pathsep}{self._saved}"
+        if self.mode == "absent":
+            # Only the empty bin dir: putting it first is not enough, because
+            # the lookup carries on down PATH and finds a REAL nvidia-smi on a
+            # box that has one (it did, on the Thor).
+            os.environ["PATH"] = str(self._bin)
+        else:
+            # The fake first, so it shadows any real nvidia-smi.
+            os.environ["PATH"] = f"{self._bin}{os.pathsep}{self._saved}"
         os.environ["FAKE_SMI_MODE"] = self.mode
         return self
 
