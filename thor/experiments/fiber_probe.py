@@ -105,8 +105,8 @@ def jacobian_batch(A, X, eps=1e-4):
         J[:, :, j] = (A(X + E) - A(X - E)) / (2 * eps)
     return J
 
-def conditional_sample(score, A, y, sigma_y, rng, steps=80, inner=3,
-                       sigmas=None, alpha=0.06, damp=1.0, x_init=None, D=2,
+def conditional_sample(score, A, y, sigma_y, rng, steps=60, inner=15,
+                       sigmas=None, eps=0.05, damp=1.0, x_init=None, D=2,
                        burn_in=300):
     """Conditional sampler:  p(x|y) ~ p(x) * N(y; A(x), sigma_y^2 I)
 
@@ -136,13 +136,16 @@ def conditional_sample(score, A, y, sigma_y, rng, steps=80, inner=3,
         return x + damp * np.einsum("nkd,nk->nd", G, lam)
 
     if burn_in > 0:
-        eta = alpha * sigmas[0] ** 2
+        s0 = sigmas[0]
         for _ in range(burn_in):
-            x = project(x + eta * score(x) + math.sqrt(2 * eta) * rng.normal(0, 1, x.shape))
+            x = project(x + eps * s0 * s0 * score(x)
+                        + math.sqrt(2 * eps) * s0 * rng.normal(0, 1, x.shape))
     for s in sigmas:
-        eta = alpha * s * s
+        # annealed Langevin: the NOISE is scaled by the noise level
+        # (Song et al., Alg. 2).  Without that sigma the chain wanders off.
         for _ in range(inner):
-            x = x + eta * score(x) + math.sqrt(2 * eta) * rng.normal(0, 1, x.shape)
+            x = x + eps * s * s * score(x) \
+                    + math.sqrt(2 * eps) * s * rng.normal(0, 1, x.shape)
             x = project(x)
     return x
 
@@ -200,7 +203,7 @@ def selftest():
         for burn in (300, 900):
             Xs = conditional_sample(score, A, np.full((512, 1), 0.7), sigma_y,
                                     np.random.default_rng(1), steps=90, inner=6,
-                                    alpha=alpha, damp=1.0, D=2, burn_in=burn)
+                                    eps=alpha, damp=1.0, D=2, burn_in=burn)
             e = float(np.abs(A(Xs) - 0.7).mean())
             mu_t = Xs.mean(0)
             dmu = float(np.linalg.norm(mu_t - mu_c))

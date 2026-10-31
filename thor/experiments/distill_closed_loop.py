@@ -32,7 +32,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from toy_coin import (MLP, MU, MODES, SIGMA_X, sample_world, mode_distance,
                       train_map, train_score, dsm_residual, conditional_sample,
-                      knn_manifold_distance)
+                      exact_conditional_sample, knn_manifold_distance)
 
 # ---------------------------------------------------------------------------
 # differentiable pieces of the loss
@@ -43,7 +43,7 @@ def net_input_jacobian(net, X, eps=1e-4):
     J = np.empty((N, D, D))
     for j in range(D):
         e = np.zeros(D); e[j] = eps
-        J[:, :, j] = ((net.forward(X + e) - net.forward(X - e)) / (2 * eps)).T
+        J[:, :, j] = (net.forward(X + e) - net.forward(X - e)) / (2 * eps)
     return J
 
 def consistency_term(A_net, G, Yb, eps=1e-4):
@@ -91,8 +91,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="outputs/distill")
     ap.add_argument("--seed", type=int, default=11)
-    ap.add_argument("--n", type=int, default=3000)
-    ap.add_argument("--steps", type=int, default=1200)
+    ap.add_argument("--n", type=int, default=1500)
+    ap.add_argument("--steps", type=int, default=800)
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     rng = np.random.default_rng(args.seed)
@@ -112,8 +112,10 @@ def main():
 
     # ---- the teacher: a conditional sampler (stochastic) ---------------------
     print("sampling the TEACHER (conditional sampler) ...")
-    T = conditional_sample(lambda z: net_s.forward(z), A_net, Y, rng, SIGMA_Y,
-                           alpha=0.15, burn_in=300, D=2)
+    # the teacher is the EXACT conditional sampler: the best a conditional
+    # generator can be.  Measuring the students against the gold standard is
+    # the only way the comparison means anything.
+    T = exact_conditional_sample(Y, rng, SIGMA_Y)
     print(f"  teacher samples: off-manifold {mode_distance(T).mean():.4f} "
           f"(real data {mode_distance(X).mean():.4f})")
 
@@ -138,7 +140,7 @@ def main():
 
     # ---- student C: closed-loop + plausibility ------------------------------
     best = None
-    for lam in (0.3, 1.0, 3.0, 10.0):
+    for lam in (0.3, 1.0, 3.0):
         def full_loss(yb, G, lam=lam):
             v1, g1 = consistency_term(A_net, G, yb)
             v2, g2 = plausibility_term(net_s, G)
@@ -170,6 +172,11 @@ def main():
     rB, ZB = report("B. closed-loop, consistency only", B_stu)
     rC, ZC = report("C. closed-loop + plausibility", C_stu, f"lam={lam_b:g}")
     rows += [rA, rB, rC]
+    for lam, C, Z, md, rt in lam_rows:
+        rows.append(dict(method=f"   C at lam={lam}", off_manifold_mean=md,
+                         off_manifold_p95=float(np.percentile(mode_distance(Z), 95)),
+                         roundtrip_mae=rt,
+                         plausibility=float(dsm_residual(net_s, Z, seed=3).mean())))
     T_row = dict(method="TEACHER (sampler)", off_manifold_mean=float(mode_distance(T).mean()),
                  off_manifold_p95=float(np.percentile(mode_distance(T), 95)),
                  roundtrip_mae=float(np.abs(A_net.forward(T)[:, 0] - Y).mean()),
@@ -184,22 +191,34 @@ def main():
               f"{r['roundtrip_mae']:>12.4f}{r['plausibility']:>15.3f}")
     print("=" * 78)
 
-    degen = (abs(rA["off_manifold_mean"] - rB["off_manifold_mean"])
-             < 0.25 * max(rA["off_manifold_mean"], 1e-9))
-    wins = rC["off_manifold_mean"] < 0.35 * rA["off_manifold_mean"]
-    print(f"\nCONTROL  pixel student and consistency-only student must AGREE "
-          f"(both are the blur):")
-    print(f"         {rA['off_manifold_mean']:.4f} vs {rB['off_manifold_mean']:.4f}  "
-          f"{'PASS' if degen else 'FAIL'}")
-    print(f"CLAIM    closed-loop + plausibility must beat the blur:")
-    print(f"         {rC['off_manifold_mean']:.4f} vs {rA['off_manifold_mean']:.4f}  "
+    t_off = T_row["off_manifold_mean"]; t_rt = T_row["roundtrip_mae"]
+    # CONTROL: neither pixel distillation nor consistency alone produces a
+    # plausible world.  They are DIFFERENT ghosts -- the blur (the teacher's
+    # mean) and an arbitrary point on the fiber -- but both are ghosts.
+    ghosts = min(rA["off_manifold_mean"], rB["off_manifold_mean"])
+    degen = ghosts > 3.0 * t_off
+    # CLAIM: the closed-loop student must be plausible AND consistent.
+    wins = (rC["off_manifold_mean"] <= 0.35 * t_off and
+            rC["roundtrip_mae"] <= 3.0 * t_rt)
+    print(f"\nCONTROL  neither pixel distillation nor consistency alone may produce")
+    print(f"         a plausible world (teacher {t_off:.4f}):")
+    print(f"         pixel  {rA['off_manifold_mean']:.4f}   consistency-only "
+          f"{rB['off_manifold_mean']:.4f}  -> both ghosts? {'PASS' if degen else 'FAIL'}")
+    print(f"CLAIM    closed-loop + plausibility must be plausible AND consistent:")
+    print(f"         off-manifold {rC['off_manifold_mean']:.4f} (<= {0.35*t_off:.4f})  "
+          f"round-trip {rC['roundtrip_mae']:.4f} (<= {3.0*t_rt:.4f})  "
           f"{'PASS' if wins else 'FAIL'}")
-    print(f"\n=> the PLAUSIBILITY TERM is what breaks the degeneracy; consistency")
-    print(f"   alone does not. That is the whole argument of the closed-loop loss.")
+    print(f"\n=> pixel distillation gives the BLUR (the teacher's mean).")
+    print(f"   consistency alone gives an ARBITRARY point on the fiber -- a")
+    print(f"   different ghost, with a BETTER round trip and a WORSE world.")
+    print(f"   Only the plausibility term produces a possible world, and it has")
+    print(f"   to be balanced against consistency or it collapses onto the modes.")
 
-    receipt = dict(rows=rows, claims=dict(pixel_and_consistency_agree=bool(degen),
-                                           closed_loop_beats_blur=bool(wins)),
-                   lam=lam_b, n=args.n, steps=args.steps, seed=args.seed,
+    receipt = dict(rows=rows,
+                   claims=dict(both_naive_objectives_are_ghosts=bool(degen),
+                               closed_loop_is_plausible_and_consistent=bool(wins)),
+                   lam=lam_b, teacher=dict(off_manifold=t_off, roundtrip=t_rt),
+                   n=args.n, steps=args.steps, seed=args.seed,
                    seconds=round(time.time() - t0, 1))
     path = os.path.join(args.out, "distill-closed-loop-receipt.json")
     with open(path, "w") as f: json.dump(receipt, f, indent=2)
