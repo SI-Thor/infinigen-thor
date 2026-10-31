@@ -51,6 +51,8 @@
 #define FASTNOISELITE_H
 
 #include <cmath>
+#include <cstddef>
+#include <cassert>
 
 class FastNoiseLite
 {
