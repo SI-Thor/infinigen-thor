@@ -13,7 +13,8 @@
 # tegrastats samples the whole batch into outputs/logs/p2-conc-N.stats.
 set -uo pipefail
 
-N="$1"; FINE="$2"; PY="$3"
+N="$1"; FINE="$2"; PY="$3"; shift 3
+EXTRA=("$@")   # e.g. -p "configure_render_cycles.num_samples=256"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$REPO/outputs/p2/conc-$N"
 LOGS="$REPO/outputs/logs"
@@ -30,7 +31,7 @@ for i in $(seq 1 "$N"); do
     bash "$REPO/thor/run-timed.sh" "p2-conc-$N-job$i" "$PY" \
       -m infinigen_examples.generate_nature --seed 0 -g desert.gin simple.gin \
       --task render --input_folder "$IN" --output_folder "$OUT/frames-$i" \
-      > /dev/null 2>&1
+      "${EXTRA[@]}" > /dev/null 2>&1
   ) &
   PIDS+=($!)
 done
@@ -41,4 +42,4 @@ WALL=$(( $(date +%s) - T0 ))
 kill "$TSTATS" 2>/dev/null
 
 PEAK_RAM=$(grep -o "RAM [0-9]*/" "$LOGS/p2-conc-$N.stats" | tr -dc "0-9\n/" | cut -d/ -f1 | sort -n | tail -1)
-echo "concurrency=$N wall=${WALL}s throughput=$(awk "BEGIN{printf \"%.2f\", $N/$WALL}") scenes/min peakSystemRAM=${PEAK_RAM:-?}MB rc=$RC"
+echo "concurrency=$N wall=${WALL}s throughput=$(awk "BEGIN{printf \"%.2f\", 60*$N/$WALL}") scenes/min per-scene=$(awk "BEGIN{printf \"%.0f\", $WALL/$N}")s peakSystemRAM=${PEAK_RAM:-?}MB rc=$RC"
