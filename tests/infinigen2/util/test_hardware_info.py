@@ -38,13 +38,20 @@ except Exception:  # pragma: no cover - fallback for a bare checkout
     # by path instead of dragging the whole package in.
     import importlib.util
 
-    _HI = (
-        Path(__file__).resolve().parents[3]
-        / "src"
-        / "infinigen2"
-        / "util"
-        / "hardware_info.py"
-    )
+    # The module may sit in the repo layout (src/infinigen2/util/...) or in a
+    # flat copy of just this file's subject (infinigen2/util/...).  Try both,
+    # so the test runs from a checkout AND from a copy of the patch alone.
+    _here = Path(__file__).resolve()
+    _candidates = [_here.parent / "hardware_info.py"]
+    for _anc in _here.parents:
+        _candidates.append(_anc / "src" / "infinigen2" / "util" / "hardware_info.py")
+        _candidates.append(_anc / "infinigen2" / "util" / "hardware_info.py")
+    _HI = next((c for c in _candidates if c.exists()), None)
+    if _HI is None:
+        raise FileNotFoundError(
+            "hardware_info.py not found; looked in: "
+            + ", ".join(str(c) for c in _candidates)
+        )
     _spec = importlib.util.spec_from_file_location("infinigen2_util_hw_info", _HI)
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
