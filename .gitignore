@@ -116,3 +116,10 @@ usd/
 docs/source/api/infinigen2*.rst
 docs/source/api/modules.rst
 docs/source/api/
+
+# Thor spike: local symlink to external build drive (space-free path)
+.ext-thor
+
+# local outputs & toolchain
+outputs/
+.venv/
