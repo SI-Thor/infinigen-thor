@@ -278,9 +278,11 @@ be reconciled for this tree.
 ## Reproducing the verification
 
 ```bash
-# scratch venv (never the main tree's .venv - the sweep is running on it)
-python3.11 -m venv .venv-harvest
-.venv-harvest/bin/pip install --no-deps <repo>/.toolchain/wheels/bpy-4.2.0-*.whl
+# scratch venv (never the main tree's .venv - the sweep is running on it).
+# The toolchain and the bpy wheel live in the main tree; only read them.
+MAIN=~/src/infinigen-thor
+$MAIN/.toolchain/python-3.11/bin/python3.11 -m venv .venv-harvest
+.venv-harvest/bin/pip install --no-deps $MAIN/.toolchain/wheels/bpy-4.2.0-*.whl
 .venv-harvest/bin/pip install numpy==1.26.4 scipy==1.12.0 scikit-learn==1.2.2 \
     pandas==2.2.3 opencv-python-headless==4.10.0.84 tqdm gin_config procfunc \
     psutil networkx pyyaml pytest pytest-timeout ruff==0.14.5
@@ -289,3 +291,8 @@ python3.11 -m venv .venv-harvest
 PYTHONPATH=src .venv-harvest/bin/python -m pytest \
     tests/infinigen/terrain tests/infinigen/constraints/test_populate_cutter.py -q
 ```
+
+The dependency pins are not upstream's: upstream allows `numpy>=1.25,<2` and
+`scikit-learn<1.4`, and the newest `scikit-learn` wheels are built against
+the numpy 2 ABI, which does not load under numpy 1.26. `numpy==1.26.4` +
+`scikit-learn==1.2.2` is the combination that works on this box.
