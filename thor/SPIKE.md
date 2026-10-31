@@ -188,3 +188,147 @@ the external drive is back. Re-enable the pieces disabled for convenience
 - **Disk policy:** everything runtime on NVMe, external drive re-formatted
   ext4 (the NTFS/fuseblk combination is a repeat-offender failure mode) and
   used strictly for cold caches/artifacts.
+
+---
+
+# Phase 2 (2026-10-31)
+
+Box state for every number below: the overnight seed sweep
+(`thor/seed-sweep.sh` + parallel `thor/sweep-worker.sh` workers, seeds 1–6)
+ran the whole time, plus other agents' builds — CPU and GPU were partially
+loaded throughout (1 Hz tegrastats/nvidia-smi per run under
+`outputs/logs/p2-*.*`). Phase-1 idle numbers are the contrast. The sweep's
+`.venv` was never modified; all phase-2 work used `.venv-p2`, built against
+a **new** wheel after the external cold shelf (still offline, needs replug)
+cost us the phase-1 build tree — Blender was re-cloned into repo-local
+`.build-thor/` on NVMe (gitignored; `build-bpy.sh` now defaults there).
+
+## 1. A denoising bpy wheel (audit items 1–2)
+
+The OptiX comment is fixed (hardware, not SDK: the AGX T5000 has no RT
+cores; NVIDIA does ship OptiX 9.x for Arm) — `5638c18c`.
+
+OIDN 2.3.0 (Blender's exact pin, MD5-checked) now builds CPU-only for
+Linux aarch64 and lands in the wheel:
+
+- `thor/patches/blender-oidn-linux-aarch64-cpu.patch` fixes the
+  `openimagedenoise.cmake` guard the audit flagged: it enabled
+  `OIDN_DEVICE_{SYCL,CUDA,HIP}` and injected Intel `dpcpp`/`ocloc`/
+  `level-zero` on **every** non-Apple, non-Windows-ARM platform; Linux
+  aarch64 now takes the CPU-only path with the default toolchain (for the
+  `make deps` route).
+- The script itself builds OIDN standalone (stage 3c) — invoking just the
+  one ExternalProject from make-deps would still pull the x86-only SYCL
+  toolchain via `add_dependencies`. Noble ships a **native arm64 ispc
+  1.22**, and OIDN ≥ 2.2 supports ARM64/NEON, so CPU-only is plain CMake.
+  Two gotchas recorded in the script: OIDN ignores `BUILD_SHARED_LIBS`
+  (`OIDN_STATIC_LIB` is the real switch), and OIDN 2.x installs three
+  archives (`api`/`core`/`device_cpu`) while Blender's Find module links
+  only `OpenImageDenoise` — they are `ar`-merged into one, link-and-run
+  tested before the big build.
+- Rebuild cost from a clean clone, 10 jobs, contended: clone ≈ 10 min,
+  OIIO 103 s, Blender configure+compile+wheel ≈ 11 min. The wheel is
+  113 MB (phase 1: 70 MB). `thor/build-bpy.sh` is idempotent and
+  reproducible end to end on this box now.
+- The smoke test **asserts** the denoiser: `scene.cycles.denoiser =
+  "OPENIMAGEDENOISE"` (raises on a wheel without OIDN — verified against
+  the phase-1 wheel) and renders denoised on CPU and CUDA (0.5 s / 0.6 s
+  at smoke scale). Signal gotcha: `bpy.app.build_options` has **no**
+  `openimagedenoise` field in 4.2, compiled in or not — the enum is the
+  only reliable check.
+
+**What denoising buys** (`thor/bench_denoise.py`, desert fine scene,
+1280×720, Cycles on the GPU; PNGs + log under `outputs/p2/denoise/`,
+`outputs/logs/p2-denoise-bench.*`):
+
+| Arm | Samples | Time | PSNR vs 1024-spp ref |
+|---|---|---|---|
+| reference | 1024, no denoise | 157.0 s | — |
+| no denoise | 128 | 49.8 s | 36.31 dB |
+| OIDN (CPU threads, after CUDA trace) | 128 | **51.8 s** | **41.31 dB** |
+
+**+5.0 dB for +2.0 s (+4%)**. Infinigen 2.0's `RuntimeError("No usable
+denoiser")` wall is gone; 1.x's default `denoise=False` can now be flipped
+per-scene (`-p configure_render_cycles.denoise=True`).
+
+## 2. `thor/probe-thor.sh` (audit item 4)
+
+Capability gate: CUDA/compute-cap, `cudaMallocManaged` round-trip + unified
+RAM, nvcc's **default** arch (warns — nvcc 13 defaults to sm_75 here, the
+phase-1 footgun), the venv bpy's OIDN denoiser, Cycles device types, and
+sm_110 SASS in every CUDA-bearing `.so` (bpy + terrain libs, via
+`cuobjdump --list-elf`). Exits non-zero on any missing capability.
+Before/after proof: `.venv` (phase-1 wheel) fails exactly the denoiser
+check; `.venv-p2` passes everything (`outputs/logs/p2-probe.out`).
+
+## 3. GPU terrain for real
+
+`Terrain.device='cuda'` via gin — no source edit (the class is
+`@gin.configurable`; the docs' default is CPU). Desert, seed 0, `.venv-p2`,
+`--task populate fine_terrain`:
+
+| Device | Wall (3 resp. 2 runs) | CPU util |
+|---|---|---|
+| CPU | 80 / 67 / 88 s | ~440% |
+| **CUDA** | **39 / 38 s** | ~150% |
+
+**2.0× wall speedup** for the fine stage, and the GPU does the field math
+(CPU util drops to ~1.5 cores).
+
+**Parity — the interesting finding:** `fine_terrain` is *not deterministic
+on a single device*. Same seed, same input, five runs
+(`outputs/logs/p2-terrain-parity.out`):
+
+- Two CPU runs differ by 102–510 vertices (of 486k); two CUDA runs differ
+  by **2179** — more than any CPU-vs-CUDA pair (632–1547). The device
+  switch is invisible inside the pipeline's own run-to-run noise.
+- 8 of 9 terrain objects (coarse terrain, inview tiles, atmosphere, …) are
+  **bit-identical** across all runs and devices; only the refined
+  `OpaqueTerrain_fine` wobbles; its bbox matches to 3e-6 and mean vertex
+  position deltas sit within 1.3× the same-device floor.
+- Consequence for the fork: hash-gated device parity is impossible until
+  `fine_terrain` is made deterministic (the parallel mesher is the prime
+  suspect) — and determinism matters on its own for reproducible GT
+  datasets.
+
+## 4. Concurrent renders
+
+Same desert scene, render task pinned to 256 spp (adaptive default would
+vary per-job work), N workers, `thor/concurrent-renders.sh`
+(`outputs/logs/p2-concurrency-256.out`):
+
+| N | wall | per scene | throughput | peak sys RAM |
+|---|---|---|---|---|
+| 1 | 54 s | 54 s | 1.11 scenes/min | 47.1 GB |
+| 2 | 102 s | 51 s | **1.18 scenes/min** | 47.3 GB |
+| 3 | 188 s | 63 s | 0.96 scenes/min | 57.3 GB |
+| 4 | 258 s | 64 s | 0.93 scenes/min | 62.8 GB |
+
+(RAM includes the sweep's ~45 GB baseline; each render adds ~4–5 GB.)
+
+**Correction to phase 1's "batch renders" recommendation:** concurrent
+Cycles jobs *fit* in the unified 122 GB with huge headroom, but they do
+**not** scale throughput on this SoC — the GPU saturates at ~2 jobs, and
+N=4 is a net loss. Pack 2 GPU renders; spend the other headroom on CPU
+work (generation, CPU-side OIDN) beside them, not on more render
+processes. (Measured with the sweep contending; the direction — flat to
+negative scaling past 2 — is robust, magnitudes approximate.)
+
+## Phase 2 commits
+
+`5638c18c` OptiX rationale · `f8ab4b91` probe-thor.sh · `94842545` OIDN
+build + patch · `1bbca5fc` benches + venv-targetable install · `37f39435`
+sweep workers (parallel agent, same worktree) · `5d1c4455` denoiser
+signal · `73b0553a` parity stats mode · `4b393677` concurrency script fix.
+
+## What phase 2 leaves open
+
+- **`fine_terrain` determinism** (above) — precondition for hash-gated
+  parity and for reproducible datasets; likely the parallel mesher.
+- **OIDN on the GPU** (`OIDN_DEVICE_CUDA`) untried — CPU OIDN already
+  costs only +2 s here, so the ceiling is small.
+- The `openimagedenoise.cmake` patch is correct-by-inspection for the
+  `make deps` route but only the standalone route was exercised (building
+  the full deps prefix for aarch64 is its own project).
+- The seed sweep's own results (spread per scene type × seed) live in
+  `outputs/sweep/sweep.tsv` — worth a digest once the workers finish.
