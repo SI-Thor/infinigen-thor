@@ -123,3 +123,6 @@ docs/source/api/
 # local outputs & toolchain
 outputs/
 .venv/
+
+# local NVMe toolchain (python 3.11 + bpy wheel) after the fuse-drive incident
+.toolchain/

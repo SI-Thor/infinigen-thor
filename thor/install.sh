@@ -16,14 +16,21 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXT_LINK="$REPO/.ext-thor"
-PY="$EXT_LINK/python-3.11/bin/python3.11"
+PY="$REPO/.toolchain/python-3.11/bin/python3.11"
 VENV="$REPO/.venv"
-WHEEL_DIR="$EXT_LINK/wheels"
+WHEEL_DIR="$REPO/.toolchain/wheels"
 
 stage() { printf '\n=== [%s] %s\n' "$(date +%H:%M:%S)" "$1"; }
 
 stage "venv at $VENV (python 3.11 from thor toolchain)"
-[[ -x "$VENV/bin/python" ]] || "$PY" -m venv "$VENV"
+# Recreate if it points at a python outside .toolchain (e.g. the retired
+# external-drive toolchain from before the fuseblk cold-shelf incident).
+if [[ -x "$VENV/bin/python" ]] && grep -q "home = $REPO/.toolchain" "$VENV/pyvenv.cfg" 2>/dev/null; then
+  echo "venv already wired to .toolchain"
+else
+  rm -rf "$VENV"
+  "$PY" -m venv "$VENV"
+fi
 "$VENV/bin/python" --version
 
 stage "install local bpy wheel first (satisfies the bpy==4.2.0 pin)"

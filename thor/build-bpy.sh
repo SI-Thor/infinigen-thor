@@ -20,18 +20,22 @@
 #   space-free repo-local symlink .ext-thor -> that drive's thor-spike/ dir.
 #
 # Stages are idempotent: each is skipped if its output already exists.
-# Sources/build trees and the toolchain live under $EXT_LINK; the produced
-# wheel lands in $EXT_LINK/wheels/ and is what thor/install.sh consumes.
+# Sources and build trees live under $EXT_LINK per the brief. The CPython
+# toolchain and the produced wheel live on the NVMe (.toolchain/, gitignored)
+# because the external cold shelf is NTFS-on-fuseblk here and it wedged hard
+# under load mid-run: processes D-stated on page faults from libpython for
+# 30+ min and the drive stayed unreadable even after a lazy umount. Runtime-
+# loadable artifacts must not page from that drive.
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXT_DRIVE="${EXT_DRIVE:-/media/caseydigennaro/TOSHIBA EXT/thor-spike}"
 EXT_LINK="$REPO/.ext-thor"                 # space-free path to $EXT_DRIVE
-PY_PREFIX="$EXT_LINK/python-3.11"          # CPython 3.11 toolchain
+PY_PREFIX="$REPO/.toolchain/python-3.11"   # CPython 3.11 toolchain (NVMe: see note below)
 BLENDER_SRC="$EXT_LINK/src/blender"        # blender v4.2.0 checkout
 BUILD_DIR="$EXT_LINK/src/build-bpy"        # cmake build tree
-WHEEL_DIR="$EXT_LINK/wheels"
+WHEEL_DIR="$REPO/.toolchain/wheels"
 LOG_DIR="$EXT_LINK/logs"
 BLENDER_TAG="${BLENDER_TAG:-v4.2.0}"
 JOBS="${JOBS:-$(nproc)}"
