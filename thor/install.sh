@@ -33,7 +33,7 @@ if [[ -z "$WHEEL" ]]; then
   exit 1
 fi
 "$VENV/bin/pip" -q install --no-deps "$WHEEL"
-"$VENV/bin/pip" show bpy | head -2
+"$VENV/bin/pip" show bpy > /dev/null && echo "bpy 4.2.0 installed in venv"
 
 stage "submodules (terrain needs OcMesher + glm)"
 git -C "$REPO" submodule update --init --recursive \
