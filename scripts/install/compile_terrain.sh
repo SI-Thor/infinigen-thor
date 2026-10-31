@@ -38,7 +38,12 @@ surfaces=(
 )
 
 nvcc_location=/usr/local/cuda/bin/nvcc
-alias nx="$nvcc_location -O3 -Xcompiler -fPIC -shared "
+# Jetson Thor (Blackwell, compute capability 11.0): nvcc's default target
+# (sm_75 on CUDA 13) yields cubins that cannot load on sm_110, so the CUDA
+# terrain libs must be built for the GPU present. -arch=native targets the
+# build machine's GPU; override with TERRAIN_CUDA_ARCH=sm_XXX to cross-build.
+terrain_cuda_arch="${TERRAIN_CUDA_ARCH:--arch=native}"
+alias nx="$nvcc_location -O3 -Xcompiler -fPIC -shared $terrain_cuda_arch "
 
 # cuda part
 if ! [ -x "$nvcc_location" ]; then
