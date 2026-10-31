@@ -124,6 +124,7 @@ docs/source/api/
 outputs/
 .venv/
 .venv-p2/
+.venv-harvest/
 
 # local NVMe toolchain (python 3.11 + bpy wheel) after the fuse-drive incident
 .toolchain/
