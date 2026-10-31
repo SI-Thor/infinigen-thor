@@ -10,20 +10,75 @@ import socket
 import subprocess
 
 
+def _run(cmd: list[str], timeout: int = 5):
+    """subprocess.run that returns None instead of raising on a missing or
+    hung binary.  Every caller below treats "the tool is not there" and "the
+    tool said no" the same way, so they should not have to care which."""
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _nvidia_gpus() -> list[str]:
+    """Detect NVIDIA GPUs.
+
+    The NAME and the MEMORY are fetched with SEPARATE queries, on purpose.  A
+    single combined query loses the GPU entirely if any one of its fields is
+    unsupported, and on unified-memory devices (Jetson AGX Thor, Jetson AGX
+    Orin, GB10) `memory.total` is exactly that field: there is no dedicated
+    VRAM to report, so it comes back as [N/A].  The name always works; the
+    memory is the field that does not.
+
+    Asking separately means an N/A - or a driver that rejects the field
+    outright - costs the memory figure and nothing else, instead of taking the
+    GPU's name down with it.
+
+    Output format is unchanged for GPUs that do have dedicated VRAM:
+    "NVIDIA A100-SXM4-80GB, 81920 MiB".  For a unified-memory device it is
+    just the name, because gluing "[N/A]" onto it makes the entry look like a
+    parsing failure rather than what it is - a device with no dedicated VRAM.
+    """
+    names_result = _run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"])
+    if names_result is None or names_result.returncode != 0:
+        return []
+    names = [
+        line.strip()
+        for line in names_result.stdout.strip().splitlines()
+        if line.strip()
+    ]
+    if not names:
+        return []
+
+    memories = [""] * len(names)
+    mem_result = _run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader"])
+    if mem_result is not None and mem_result.returncode == 0:
+        values = [
+            line.strip()
+            for line in mem_result.stdout.strip().splitlines()
+            if line.strip()
+        ]
+        for i, value in enumerate(values[: len(names)]):
+            # [N/A] / N/A / Not Supported all mean "no dedicated VRAM to
+            # report" (unified memory).  Recording the literal string is worse
+            # than recording nothing: it makes the entry look broken.
+            lowered = value.lower()
+            if lowered in ("n/a", "not supported", "[n/a]") or value.startswith("["):
+                continue
+            memories[i] = value
+
+    return [
+        f"{name}, {memories[i]}" if memories[i] else name
+        for i, name in enumerate(names)
+    ]
+
+
 def _detect_gpus() -> list[str]:
     gpus = []
 
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            gpus += [line.strip() for line in result.stdout.strip().splitlines()]
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    gpus += _nvidia_gpus()
 
     try:
         result = subprocess.run(

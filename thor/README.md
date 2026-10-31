@@ -44,11 +44,14 @@
 3. **The build has no denoiser and Infinigen 2.0 hard-fails without one.**
    `render_cycles.py` raises rather than degrades; 1.x only warns. But the cheap fix is
    a **3-line patch**, not an OIDN build: `patch-infinigen2-denoise-fallback.patch`.
-4. **The scheduler is about to think the Thor has no GPU.**
-   `infinigen2/util/hardware_info.py` calls `nvidia-smi --query-gpu=name,memory.total`
-   and keeps the result only if the exit code is 0. On Tegra, `nvidia-smi` is a
-   different implementation and GPU memory is shared with the CPU — and your own
-   research already says so. `probe-thor-receipts.sh` tests this exact call.
+4. **GPU detection asks for the name and the memory in one query.**
+   `infinigen2/util/hardware_info.py` calls `nvidia-smi --query-gpu=name,memory.total`.
+   On a unified-memory device (`memory.total` → `[N/A]`) the entry is malformed,
+   and if the driver rejects that field the **GPU's name is lost with it**.
+   Measured on Thor/Orin/dGPU with a fake `nvidia-smi` — see
+   `tests/infinigen2/util/test_hardware_info.py`.
+   **Fixed in this branch**: the two queries are separate, `[N/A]` is dropped,
+   and a GPU with real VRAM keeps its exact old `"NAME, MEMORY"` format.
 5. **The build tree is still on the drive that just ate a 30-minute run.**
    `361fc7cb` moved the runtime toolchain to NVMe but left the ninja build tree and
    the logs on the wedging fuseblk/USB shelf. Two lines to fix.
