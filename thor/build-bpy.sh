@@ -23,17 +23,20 @@
 #   space-free repo-local symlink .ext-thor -> that drive's thor-spike/ dir.
 #
 # Stages are idempotent: each is skipped if its output already exists.
-# Sources and build trees live under $EXT_LINK per the brief. The CPython
-# toolchain and the produced wheel live on the NVMe (.toolchain/, gitignored)
-# because the external cold shelf is NTFS-on-fuseblk here and it wedged hard
-# under load mid-run: processes D-stated on page faults from libpython for
-# 30+ min and the drive stayed unreadable even after a lazy umount. Runtime-
-# loadable artifacts must not page from that drive.
+# Sources and build trees default to the repo-local .build-thor/ on NVMe
+# (gitignored): the original external-drive build tree was parked on the
+# NTFS/fuseblk cold shelf when it wedged (2026-10-31) and the box re-cloned
+# from scratch there; override EXT_DRIVE when that drive is healthy again.
+# The CPython toolchain and the produced wheel live on the NVMe (.toolchain/,
+# gitignored) because runtime-loadable artifacts must not page from that
+# drive: it wedged hard under load mid-run - processes D-stated on page
+# faults from libpython for 30+ min and stayed unreadable even after a lazy
+# umount.
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXT_DRIVE="${EXT_DRIVE:-/media/caseydigennaro/TOSHIBA EXT/thor-spike}"
+EXT_DRIVE="${EXT_DRIVE:-$REPO/.build-thor}"
 EXT_LINK="$REPO/.ext-thor"                 # space-free path to $EXT_DRIVE
 PY_PREFIX="$REPO/.toolchain/python-3.11"   # CPython 3.11 toolchain (NVMe: see note below)
 BLENDER_SRC="$EXT_LINK/src/blender"        # blender v4.2.0 checkout
@@ -55,8 +58,9 @@ ln -sfn "$EXT_DRIVE" "$EXT_LINK"
 # ---------------------------------------------------------------------------
 stage 0 "apt dependencies"
 # System-library build of Blender 4.2 (no vcpkg) + Infinigen's documented deps.
-# Not packaged in noble: OpenSubdiv is 'libosd-dev' (3.5), OIDN is absent
-# (WITH_OPENIMAGEDENOISE=OFF), USD is absent (WITH_USD=OFF).
+# Not packaged in noble: OpenSubdiv is 'libosd-dev' (3.5), USD is absent
+# (WITH_USD=OFF). OIDN is absent from noble too but builds from source
+# (stage 3c below) since ispc ships for arm64.
 APT_PKGS=(
   build-essential git cmake ninja-build gettext wget pkg-config
   libx11-dev libxxf86vm-dev libxcursor-dev libxi-dev libxrandr-dev
@@ -71,7 +75,10 @@ APT_PKGS=(
   libreadline-dev libncurses-dev libgmp-dev libpotrace-dev
   libfreetype-dev libharfbuzz-dev libfribidi-dev libudev-dev libdrm-dev
   libepoxy-dev libglew-dev libglfw3-dev libglm-dev
+  ispc
 )
+# ispc: OIDN compiles its CPU kernels with it; noble's 1.22 is a native
+# arm64 build, which is what makes WITH_OPENIMAGEDENOISE=ON possible here.
 sudo apt-get install -y -q "${APT_PKGS[@]}" > "$LOG_DIR/apt.log" 2>&1 || {
   log "apt install had failures, inspect $LOG_DIR/apt.log"; exit 1; }
 
@@ -177,6 +184,52 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+stage 3c "OpenImageDenoise 2.3.0 (CPU/NEON, static)"
+# Noble has no OIDN package and Blender's build_environment route is x86-only
+# for it: openimagedenoise.cmake turns on OIDN_DEVICE_{SYCL,CUDA,HIP} for
+# every non-Apple, non-Windows-ARM platform and injects Intel's dpcpp as the
+# compiler (thor/patches/blender-oidn-linux-aarch64-cpu.patch fixes that
+# guard for anyone using `make deps`). This script builds the pinned version
+# (versions.cmake: OIDN_VERSION 2.3.0, MD5 checked against Blender's pin)
+# CPU-only - OIDN >= 2.2 supports ARM64/NEON, and noble ships a native arm64
+# ispc 1.22 for the CPU kernels. Static, and the three archives OIDN 2.x
+# installs (api/core/device_cpu) are merged into one libOpenImageDenoise.a:
+# Blender's FindOpenImageDenoise only links the "OpenImageDenoise" component.
+OIDN_PREFIX="$EXT_LINK/oidn"
+OIDN_SRC="$EXT_LINK/src/oidn-2.3.0"
+if [[ -f "$OIDN_PREFIX/lib/libOpenImageDenoise.a" ]] && ar t "$OIDN_PREFIX/lib/libOpenImageDenoise.a" | grep -q "^cpu_"; then
+  log "OIDN already installed (merged static archive)"
+else
+  mkdir -p "$EXT_LINK/src"; cd "$EXT_LINK/src"
+  [[ -d oidn-2.3.0 ]] || {
+    curl -sL -o oidn-2.3.0.src.tar.gz \
+      https://github.com/OpenImageDenoise/oidn/releases/download/v2.3.0/oidn-2.3.0.src.tar.gz
+    echo "31a3d8b9168966a2fa93daa6becad586  oidn-2.3.0.src.tar.gz" | md5sum -c -
+    tar xzf oidn-2.3.0.src.tar.gz
+  }
+  cmake -S "$OIDN_SRC" -B "$OIDN_SRC/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$OIDN_PREFIX" \
+    -DOIDN_STATIC_LIB=ON -DOIDN_APPS=OFF -DOIDN_FILTER_RTLIGHTMAP=OFF \
+    -DOIDN_DEVICE_CPU=ON -DOIDN_DEVICE_SYCL=OFF -DOIDN_DEVICE_CUDA=OFF \
+    -DOIDN_DEVICE_HIP=OFF -DISPC_EXECUTABLE="$(command -v ispc)" \
+    > "$LOG_DIR/oidn-configure.log" 2>&1
+  ninja -C "$OIDN_SRC/build" -j"$JOBS" > "$LOG_DIR/oidn-build.log" 2>&1
+  cmake --install "$OIDN_SRC/build" > "$LOG_DIR/oidn-install.log" 2>&1
+  # OIDN ignores BUILD_SHARED_LIBS; OIDN_STATIC_LIB=ON is the real switch.
+  cd "$OIDN_PREFIX/lib"
+  ar -M <<AR
+CREATE merged.a
+ADDLIB libOpenImageDenoise.a
+ADDLIB libOpenImageDenoise_core.a
+ADDLIB libOpenImageDenoise_device_cpu.a
+SAVE
+END
+AR
+  mv merged.a libOpenImageDenoise.a
+  log "OIDN installed at $OIDN_PREFIX (merged static archive)"
+fi
+
+# ---------------------------------------------------------------------------
 stage 4 "cmake configure bpy module (CUDA arch $CUDA_ARCH)"
 cmake -S "$BLENDER_SRC" -B "$BUILD_DIR" -G Ninja \
   -C "$BLENDER_SRC/build_files/cmake/config/bpy_module.cmake" \
@@ -188,14 +241,15 @@ cmake -S "$BLENDER_SRC" -B "$BUILD_DIR" -G Ninja \
   -DOPENIMAGEIO_ROOT_DIR="$OIIO_PREFIX" \
   -UOPENIMAGEIO_INCLUDE_DIR -UOPENIMAGEIO_LIBRARY -UOPENIMAGEIO_LIBRARIES \
   -UOPENIMAGEIO_UTIL_LIBRARY \
-  -DCMAKE_CXX_STANDARD_LIBRARIES="-ltiff" \
+  -DCMAKE_CXX_STANDARD_LIBRARIES="-ltiff -ltbb" \
   -DWITH_CYCLES_CUDA_BINARIES=ON \
   -DCYCLES_CUDA_BINARIES_ARCH=sm_"$CUDA_ARCH" \
   -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
   -DWITH_CYCLES_DEVICE_OPTIX=OFF \
   -DWITH_CYCLES_DEVICE_HIP=OFF \
   -DWITH_CYCLES_DEVICE_ONEAPI=OFF \
-  -DWITH_OPENIMAGEDENOISE=OFF \
+  -DWITH_OPENIMAGEDENOISE=ON \
+  -DOPENIMAGEDENOISE_ROOT_DIR="$OIDN_PREFIX" \
   -DWITH_ALEMBIC=OFF \
   -DWITH_OPENCOLLADA=OFF \
   -DWITH_USD=OFF \
@@ -217,7 +271,10 @@ cd "$BLENDER_SRC/build_files/utils"
 ls -la "$WHEEL_DIR"
 
 # ---------------------------------------------------------------------------
-stage 7 "smoke test: import bpy + render on CPU and CUDA"
+stage 7 "smoke test: import bpy, assert a denoiser, render CPU + CUDA"
+# The denoiser assertions are the point: phase 1 shipped a wheel without
+# OIDN and only Infinigen's warn-only fallback revealed it. A wheel that
+# cannot denoise must fail the build here, loudly.
 SMOKE="$EXT_LINK/logs/bpy-smoke"
 rm -rf "$SMOKE"; mkdir -p "$SMOKE"
 "$PY" -m venv "$SMOKE/venv"
@@ -225,12 +282,15 @@ rm -rf "$SMOKE"; mkdir -p "$SMOKE"
 "$SMOKE/venv/bin/python" - <<'EOF' 2>&1 | tee "$LOG_DIR/bpy-smoke.log"
 import bpy, time
 print("bpy", bpy.app.version_string, "| build:", bpy.app.build_platform.decode())
+assert bpy.app.build_options.openimagedenoise, \
+    "openimagedenoise not compiled into this wheel"
 for dev in bpy.context.preferences.addons["cycles"].preferences.devices:
     print("cycles device:", dev.name, dev.type)
 for device in ("CPU", "GPU"):
     scene = bpy.data.scenes["Scene"]
-    scene.cycles.use_denoising = False  # OIDN is not available in this build
     scene.render.engine = "CYCLES"
+    scene.cycles.use_denoising = True
+    scene.cycles.denoiser = "OPENIMAGEDENOISE"  # raises if OIDN is missing
     if device == "GPU":
         # Prefer CUDA on the Thor: its GPU has no RT cores, so OptiX cannot
         # exist on this box regardless of SDK support.
@@ -244,6 +304,7 @@ for device in ("CPU", "GPU"):
     scene.cycles.samples = 32
     scene.render.filepath = f"/tmp/bpy-smoke-{device.lower()}.png"
     t0 = time.time(); bpy.ops.render.render(write_still=True)
-    print(f"render[{device}] {time.time()-t0:.1f}s -> {scene.render.filepath}")
+    print(f"render[{device}, denoised] {time.time()-t0:.1f}s -> {scene.render.filepath}")
+print("denoiser assertions passed")
 EOF
 log "DONE. wheel in $WHEEL_DIR"
