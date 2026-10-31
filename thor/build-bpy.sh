@@ -108,11 +108,11 @@ assert sys.version_info[:2] == (3, 11)
 assert sysconfig.get_config_var("Py_ENABLE_SHARED")' 2>/dev/null; then
   log "python 3.11 already OK"
 else
-  cd "$EXT_LINK/src"
-  rm -rf Python-3.11.13 python-3.11
-  [[ -f python-3.11.13.tgz ]] || curl -sLO https://www.python.org/ftp/python/3.11.13/Python-3.11.13.tgz
-  mv -f Python-3.11.13.tgz python-3.11.13.tgz 2>/dev/null || true
-  tar xf python-3.11.13.tgz
+  mkdir -p "$REPO/.toolchain/src"
+  cd "$REPO/.toolchain/src"
+  rm -rf Python-3.11.13
+  [[ -f Python-3.11.13.tgz ]] || curl -sL -o Python-3.11.13.tgz https://www.python.org/ftp/python/3.11.13/Python-3.11.13.tgz
+  tar xf Python-3.11.13.tgz
   cd Python-3.11.13
   LDFLAGS="-Wl,-rpath,$PY_PREFIX/lib" ./configure --prefix="$PY_PREFIX" \
     --enable-shared --with-ensurepip=install > "$LOG_DIR/cpython-configure.log" 2>&1
