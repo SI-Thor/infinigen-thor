@@ -8,8 +8,11 @@
 # Infinigen pins bpy==4.2.0, so the only path is building the Python module
 # (WITH_PYTHON_MODULE) from source against CPython 3.11 (the Python Blender 4.2
 # embeds) with Cycles CUDA kernels for the Thor's Blackwell GPU (compute
-# capability 11.0 -> sm_110, CUDA 13.2 at /usr/local/cuda). OptiX has no
-# aarch64 SDK, so CUDA only.
+# capability 11.0 -> sm_110, CUDA 13.2 at /usr/local/cuda). OptiX is OFF
+# because the Thor's GPU has no RT cores (NVIDIA staff, developer forums,
+# 2025-09-01: "There is no RT cores in AGX T5000") and OptiX requires them;
+# it is a hardware limit, not a missing SDK - NVIDIA does ship OptiX 9.x
+# for Arm/aarch64. CUDA-only.
 #
 # Environment / box assumptions (see thor/SPIKE.md):
 #   - Ubuntu 24.04 (noble) aarch64, 14 cores, passwordless sudo for apt.
@@ -229,7 +232,8 @@ for device in ("CPU", "GPU"):
     scene.cycles.use_denoising = False  # OIDN is not available in this build
     scene.render.engine = "CYCLES"
     if device == "GPU":
-        # Prefer CUDA on the Thor (OptiX does not exist on aarch64).
+        # Prefer CUDA on the Thor: its GPU has no RT cores, so OptiX cannot
+        # exist on this box regardless of SDK support.
         prefs = bpy.context.preferences.addons["cycles"].preferences
         prefs.compute_device_type = "CUDA"
         prefs.get_devices()

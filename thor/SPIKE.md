@@ -48,7 +48,7 @@ What had to change (all captured in `thor/build-bpy.sh` +
 | noble's OpenImageIO 2.4 lacks `ImageInput::valid_file(IOProxy*)` used by imbuf | build OIIO **v2.5.11.0** (Blender's own pin) static; re-point cached CMake finds (`-UOPENIMAGEIO_*`) |
 | **the box's ffmpeg is NVIDIA's `8.0.1-nvidia1`** (Jetson repo), not Ubuntu's 6.1 | 3 API-removal patches: `AV_INPUT_BUFFER_MIN_SIZE`, `AVFrame::key_frame` + opaque `AVInputFormat`, `AVFrame::pkt_pos/pkt_dts` |
 | static OIIO's transitive `-ltiff` dropped by `--as-needed` ordering → `TIFF*` undefined in `bpy/__init__.so` | `CMAKE_CXX_STANDARD_LIBRARIES=-ltiff` (appends after objects) |
-| OptiX: no aarch64 SDK | `WITH_CYCLES_DEVICE_OPTIX=OFF`; CUDA-only (fine on Jetson) |
+| OptiX: the AGX T5000 has **no RT cores** (NVIDIA staff, dev forums 2025-09-01) | `WITH_CYCLES_DEVICE_OPTIX=OFF`; CUDA-only — a hardware limit, not a missing aarch64 SDK (OptiX 9.x does ship for Arm) |
 | OpenImageDenoise: no noble package | `WITH_OPENIMAGEDENOISE=OFF`. Infinigen sets `denoise=False` in both base configs, so nothing in this spike needs it; denoising would fail loudly if enabled |
 | also auto-disabled by CMake (optional): OSL, NanoVDB, MaterialX, OpenXR, Haru, OpenPGL path guiding | no impact on Infinigen's node-based materials |
 
@@ -156,8 +156,9 @@ tegrastats RAM for GPU-side memory accounting.
    original wheel are parked on it.
 3. Ubuntu 24.04 gaps (Python 3.11, OIIO 2.5, OIDN, USD) — solved or
    disabled without affecting Infinigen's core path.
-4. No OptiX on aarch64, ever — CUDA-only is the Thor's ceiling for Cycles
-   (and it is plenty: 7.1× over 14 CPU cores).
+4. No OptiX on the Thor, ever — not an SDK gap (NVIDIA ships OptiX 9.x for
+   Arm) but hardware: the AGX T5000 has no RT cores. CUDA-only is the
+   Thor's ceiling for Cycles (and it is plenty: 7.1× over 14 CPU cores).
 
 ## Phase 2 recommendation
 
