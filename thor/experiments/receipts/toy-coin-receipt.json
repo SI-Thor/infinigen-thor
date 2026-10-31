@@ -1,0 +1,57 @@
+{
+  "rows": [
+    {
+      "method": "REAL DATA",
+      "off_manifold_mean": 0.056445610993408855,
+      "off_manifold_p95": 0.3074137912326847,
+      "knn_dist": 0.048607682926638335,
+      "roundtrip_mae": 0.05130220812479159,
+      "extra": ""
+    },
+    {
+      "method": "deterministic inverse  E[x|y]",
+      "off_manifold_mean": 0.5435788900841837,
+      "off_manifold_p95": 1.5902170022199418,
+      "knn_dist": 0.3854534390650713,
+      "roundtrip_mae": 0.09919505262570852,
+      "extra": ""
+    },
+    {
+      "method": "score-only sampler (prior)",
+      "off_manifold_mean": 0.09832457208895817,
+      "off_manifold_p95": 0.4374632186802892,
+      "knn_dist": 0.08137228874738142,
+      "roundtrip_mae": 1.7821126153922353,
+      "extra": ""
+    },
+    {
+      "method": "conditional sampler (LEARNED score)",
+      "off_manifold_mean": 1.821286013023241,
+      "off_manifold_p95": 0.4335060041024445,
+      "knn_dist": 1.809302463469035,
+      "roundtrip_mae": 0.0010481485799976739,
+      "extra": "eps=0.05 inner=15"
+    },
+    {
+      "method": "conditional sampler (EXACT)",
+      "off_manifold_mean": 0.054526112025446605,
+      "off_manifold_p95": 0.3267695687674865,
+      "knn_dist": 0.06477844911951602,
+      "roundtrip_mae": 0.05153339896102206,
+      "extra": "gold standard"
+    }
+  ],
+  "auc_real_vs_blur": 0.8094722222222223,
+  "auc_wide_fibre": 1.0,
+  "claims": {
+    "C1_score_is_generator": true,
+    "C2_closed_loop_is_degenerate": true,
+    "C3_prior_term_fixes_it": true,
+    "C4_score_is_the_critic": true
+  },
+  "sigma_y": 0.06,
+  "modes": 8,
+  "n": 1500,
+  "seed": 7,
+  "seconds": 164.6
+}

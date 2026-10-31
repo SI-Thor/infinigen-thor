@@ -1,0 +1,37 @@
+diff --git a/build_files/build_environment/cmake/openimagedenoise.cmake b/build_files/build_environment/cmake/openimagedenoise.cmake
+--- a/build_files/build_environment/cmake/openimagedenoise.cmake
++++ b/build_files/build_environment/cmake/openimagedenoise.cmake
+@@ -22,13 +22,29 @@
+   )
+ 
+   # x64 platforms support SyCL, ARM64 don't
+-  if(NOT BLENDER_PLATFORM_WINDOWS_ARM)
++  #
++  # THOR (aarch64): the guard above excludes only Windows-on-ARM, so on Linux
++  # aarch64 this block turns the SYCL, CUDA and HIP devices ON - and none of
++  # them can be built on this box:
++  #   * SYCL needs oneAPI's DPC++ compiler, an x86_64 binary; on aarch64 the
++  #     package installs but the compiler cannot execute.
++  #   * the OIDN CUDA device compiles with nvcc, whose default target on
++  #     CUDA 13 is sm_75; those cubins fail to load on this sm_110 GPU.
++  #
++  # Default to the CPU device - OIDN 2.3.0 supports ARM64 (AArch64) via NEON.
++  # To build the CUDA device for a specific arch, pass e.g.
++  #   -DOIDN_DEVICE_CUDA_ARCH=110          (sm_110, this Thor)
++  if(DEFINED OIDN_DEVICE_CUDA_ARCH AND NOT OIDN_DEVICE_CUDA_ARCH STREQUAL "")
+     set(OIDN_EXTRA_ARGS
+       ${OIDN_EXTRA_ARGS}
+-      -DOIDN_DEVICE_SYCL=ON
+-      -DOIDN_DEVICE_SYCL_AOT=OFF
+       -DOIDN_DEVICE_CUDA=ON
+-      -DOIDN_DEVICE_HIP=ON)
++      -DCMAKE_CUDA_ARCHITECTURES=${OIDN_DEVICE_CUDA_ARCH})
++  else()
++    set(OIDN_EXTRA_ARGS
++      ${OIDN_EXTRA_ARGS}
++      -DOIDN_DEVICE_SYCL=OFF
++      -DOIDN_DEVICE_CUDA=OFF
++      -DOIDN_DEVICE_HIP=OFF)
+   endif()
+ endif()
+ 

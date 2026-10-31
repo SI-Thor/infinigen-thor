@@ -1,0 +1,77 @@
+{
+  "rows": [
+    {
+      "method": "REAL DATA (floor)",
+      "off_manifold_mean": 0.055055559467953145,
+      "off_manifold_p95": 0.3435057824989048,
+      "roundtrip_mae": 0.06,
+      "plausibility": 40.25402126700509
+    },
+    {
+      "method": "TEACHER (sampler)",
+      "off_manifold_mean": 0.0529978917179403,
+      "off_manifold_p95": 0.30195803903552515,
+      "roundtrip_mae": 0.0594611538522354,
+      "plausibility": 40.4978571623721
+    },
+    {
+      "method": "A. pixel distillation",
+      "off_manifold_mean": 0.6053011613694131,
+      "off_manifold_p95": 1.7151783349766967,
+      "roundtrip_mae": 0.062124769511849885,
+      "plausibility": 196.14037655684285,
+      "extra": ""
+    },
+    {
+      "method": "B. closed-loop, consistency only",
+      "off_manifold_mean": 0.9925265270113217,
+      "off_manifold_p95": 1.4009969922336867,
+      "roundtrip_mae": 0.046895916343742065,
+      "plausibility": 250.47633956255504,
+      "extra": ""
+    },
+    {
+      "method": "C. closed-loop + plausibility",
+      "off_manifold_mean": -0.13222125360890555,
+      "off_manifold_p95": 0.04318855006509451,
+      "roundtrip_mae": 0.23113483431917128,
+      "plausibility": 24.813143411435387,
+      "extra": "lam=1"
+    },
+    {
+      "method": "   C at lam=0.3",
+      "off_manifold_mean": -0.09275518784694041,
+      "off_manifold_p95": 0.0872798163486616,
+      "roundtrip_mae": 0.18706743750695978,
+      "plausibility": 27.751584298048712
+    },
+    {
+      "method": "   C at lam=1.0",
+      "off_manifold_mean": -0.13222125360890555,
+      "off_manifold_p95": 0.04318855006509451,
+      "roundtrip_mae": 0.23113483431917128,
+      "plausibility": 24.813143411435387
+    },
+    {
+      "method": "   C at lam=3.0",
+      "off_manifold_mean": -0.09820069392771988,
+      "off_manifold_p95": 0.3721556855275385,
+      "roundtrip_mae": 0.3654096422911504,
+      "plausibility": 27.024902099619936
+    }
+  ],
+  "claims": {
+    "C1_both_naive_objectives_are_ghosts": true,
+    "C2_plausibility_makes_it_possible": true,
+    "C3_only_the_stochastic_generator_is_both": true
+  },
+  "lam": 1.0,
+  "teacher": {
+    "off_manifold": 0.0529978917179403,
+    "roundtrip": 0.0594611538522354
+  },
+  "n": 1500,
+  "steps": 500,
+  "seed": 11,
+  "seconds": 77.7
+}
