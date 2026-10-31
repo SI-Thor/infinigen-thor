@@ -1,0 +1,26 @@
+diff --git a/intern/cycles/kernel/device/cuda/config.h b/intern/cycles/kernel/device/cuda/config.h
+index 75edb80..cce4e06 100644
+--- a/intern/cycles/kernel/device/cuda/config.h
++++ b/intern/cycles/kernel/device/cuda/config.h
+@@ -73,6 +73,21 @@
+ #  define GPU_KERNEL_BLOCK_NUM_THREADS 512
+ #  define GPU_KERNEL_MAX_REGISTERS 96
+ 
++/* 9.x, 10.x, 11.x (Hopper, Blackwell, Jetson Thor GB10).
++ * Launch-bounds inputs are unchanged from 8.x (64k regs/SM, 32 blocks/SM,
++ * 1024 threads/block); 4.2 predates these architectures, which upstream
++ * served via compute_75 PTX + driver JIT. Compiled natively for sm_110 on
++ * the Jetson AGX Thor. */
++#elif __CUDA_ARCH__ >= 900
++#  define GPU_MULTIPRESSOR_MAX_REGISTERS 65536
++#  define GPU_MULTIPROCESSOR_MAX_BLOCKS 32
++#  define GPU_BLOCK_MAX_THREADS 1024
++#  define GPU_THREAD_MAX_REGISTERS 255
++
++/* tunable parameters */
++#  define GPU_KERNEL_BLOCK_NUM_THREADS 512
++#  define GPU_KERNEL_MAX_REGISTERS 96
++
+ /* unknown architecture */
+ #else
+ #  error "Unknown or unsupported CUDA architecture, can't determine launch bounds"
