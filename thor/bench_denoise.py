@@ -22,7 +22,9 @@ scene_path, outdir = sys.argv[1], sys.argv[2]
 samples = int(sys.argv[3]) if len(sys.argv) > 3 else 128
 ref_samples = int(sys.argv[4]) if len(sys.argv) > 4 else 1024
 
-assert bpy.app.build_options.openimagedenoise, "no OIDN in this bpy build"
+# bpy.app.build_options has no openimagedenoise field in 4.2; the Cycles
+# enum assignment is the operative check (raises without OIDN).
+bpy.data.scenes["Scene"].cycles.denoiser = "OPENIMAGEDENOISE"
 
 bpy.ops.wm.open_mainfile(filepath=scene_path)
 scene = bpy.context.scene

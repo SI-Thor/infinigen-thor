@@ -52,8 +52,12 @@ CUDA_ARCH="${CUDA_ARCH:-110}"
 stage() { printf '\n=== [%s] %s (start %s)\n' "$(date +%H:%M:%S)" "$1" "$(date +%s)"; }
 log()   { echo "[build-bpy] $*"; }
 
-mkdir -p "$EXT_DRIVE" "$WHEEL_DIR" "$LOG_DIR"
+# Create the real directories first, then (re)point the space-free symlink,
+# then create dirs reached through the symlink: mkdir -p through a dangling
+# or stale .ext-thor fails with EEXIST before ln gets a chance to fix it.
+mkdir -p "$EXT_DRIVE" "$WHEEL_DIR"
 ln -sfn "$EXT_DRIVE" "$EXT_LINK"
+mkdir -p "$LOG_DIR"
 
 # ---------------------------------------------------------------------------
 stage 0 "apt dependencies"
@@ -282,8 +286,9 @@ rm -rf "$SMOKE"; mkdir -p "$SMOKE"
 "$SMOKE/venv/bin/python" - <<'EOF' 2>&1 | tee "$LOG_DIR/bpy-smoke.log"
 import bpy, time
 print("bpy", bpy.app.version_string, "| build:", bpy.app.build_platform.decode())
-assert bpy.app.build_options.openimagedenoise, \
-    "openimagedenoise not compiled into this wheel"
+# bpy.app.build_options has no openimagedenoise field in 4.2; the operative
+# signal is whether Cycles accepts the enum value (raises when OIDN is not
+# compiled in - verified: the phase-1 wheel rejects it, this one must not).
 for dev in bpy.context.preferences.addons["cycles"].preferences.devices:
     print("cycles device:", dev.name, dev.type)
 for device in ("CPU", "GPU"):

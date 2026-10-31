@@ -97,13 +97,12 @@ else
   if OUT=$("$VENV/bin/python" - <<'EOF' 2>&1
 import bpy
 
-oidn = getattr(bpy.app.build_options, "openimagedenoise", False)
+# The operative denoiser signal is the Cycles enum: bpy.app.build_options
+# has no openimagedenoise field in 4.2, and the enum raises on assignment
+# when OIDN is not compiled into the wheel (verified on the phase-1 wheel).
 try:
     bpy.data.scenes["Scene"].cycles.denoiser = "OPENIMAGEDENOISE"
-    if oidn:
-        print("oidn: OK - compiled in and Cycles accepts OPENIMAGEDENOISE")
-    else:
-        print("oidn: FAIL - denoiser enum works but build_options says not compiled in")
+    print("oidn: OK - Cycles accepts the OPENIMAGEDENOISE denoiser")
 except Exception as e:
     print(f"oidn: FAIL - {type(e).__name__}: {e}")
 
