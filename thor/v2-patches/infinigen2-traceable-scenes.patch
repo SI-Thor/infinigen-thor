@@ -1,0 +1,896 @@
+diff --git a/src/infinigen2/curves/room_edge.py b/src/infinigen2/curves/room_edge.py
+index 847efb4..7bf3076 100644
+--- a/src/infinigen2/curves/room_edge.py
++++ b/src/infinigen2/curves/room_edge.py
+@@ -11,11 +11,21 @@ from procfunc.nodes import types as t
+ from infinigen2.util.curve import curve_to_noncyclic, fillet_mask
+ 
+ __all__ = [
++    "ROOM_WALL_COUNT",
+     "RoomEdgeCurveResult",
+     "rectangle_outline",
+     "room_edge_curve_rand",
+ ]
+ 
++# rectangle_outline() builds a quadrilateral curve, so the room outline always
++# has 4 corners and therefore 4 walls. The per-face "wall_idx" attribute
++# (RoomEdgeCurveResult.orig_point_idx) enumerates those walls as 0..3.
++#
++# This count has to be known without evaluating any geometry: the tracer
++# records control flow, and code that iterates over a runtime-derived set of
++# wall indices cannot be traced. See infinigen2/scenes/room/room_shape.py.
++ROOM_WALL_COUNT = 4
++
+ 
+ @pf.nodes.node_function
+ def rectangle_outline(
+@@ -40,6 +50,7 @@ class RoomEdgeCurveResult(NamedTuple):
+     curve: pf.ProcNode
+     is_flat_point: pf.ProcNode[bool]
+     orig_point_idx: pf.ProcNode[int]
++    n_walls: int
+ 
+ 
+ def room_edge_curve_rand(
+@@ -117,4 +128,5 @@ def room_edge_curve_rand(
+         curve=fillet_mask_result.curve,
+         is_flat_point=fillet_mask_result.is_flat_point,
+         orig_point_idx=fillet_mask_result.orig_point_idx,
++        n_walls=ROOM_WALL_COUNT,
+     )
+diff --git a/src/infinigen2/generate.py b/src/infinigen2/generate.py
+index 75cab2e..dca70c0 100644
+--- a/src/infinigen2/generate.py
++++ b/src/infinigen2/generate.py
+@@ -513,12 +513,12 @@ def _unpack_scene(result, data: dict):
+     # all_objects is the full scene set so far, not just this step's additions.
+     data["objects"] = result.all_objects
+     data["all_objects"] = result.all_objects
+-    data["cameras"] += getattr(result, "cameras", [])
+-    data["lights"] += getattr(result, "lights", [])
++    _extend_list(data["cameras"], getattr(result, "cameras", []))
++    _extend_list(data["lights"], getattr(result, "lights", []))
+     if getattr(result, "environment", None) is not None:
+         data["environment"] = result.environment
+     curves = getattr(result, "curves", None)
+-    if curves:
++    if curves and not _is_proxy(curves):
+         data["curves"] = list(curves)
+         data["curve"] = curves[0]
+     if hasattr(result, "colliders"):
+@@ -526,10 +526,29 @@ def _unpack_scene(result, data: dict):
+     if getattr(result, "dimensions", None) is not None:
+         data["dimensions"] = result.dimensions
+         dims = result.dimensions
+-        data["bbox"] = (
+-            np.zeros(3),
+-            np.array([float(dims.x), float(dims.y), float(dims.z)]),
+-        )
++        if not _is_proxy(dims):
++            data["bbox"] = (
++                np.zeros(3),
++                np.array([float(dims.x), float(dims.y), float(dims.z)]),
++            )
++
++
++def _is_proxy(val) -> bool:
++    """True if val is a procfunc Proxy, i.e. a value that only exists in the graph.
++
++    While tracing, a scene generator may return objects that the tracer could
++    not resolve - for example the walls of a room whose geometry is only
++    computed at render time. Those are Proxies, and the pipeline must not try
++    to iterate them.
++    """
++    return isinstance(val, pf.compute_graph.Proxy)
++
++
++def _extend_list(target: list, values) -> None:
++    """Append `values` to `target`, skipping values the tracer could not resolve."""
++    if _is_proxy(values):
++        return
++    target.extend(values)
+ 
+ 
+ def _unpack_by_category(category: str, result, data: dict):
+@@ -651,24 +670,29 @@ def execute_generators(
+     for name, elapsed in generator_times.items():
+         logger.info(f"{name}: {elapsed:.3f}s")
+ 
+-    try:
+-        objects = data["objects"]
+-        base_tris = 0
+-        for obj in objects:
+-            item = obj.item()
+-            if item.type != "MESH":
+-                continue
+-            mesh = item.data
+-            base_tris += len(mesh.loops) - 2 * len(mesh.polygons)
+-        subdiv_tris, _ = estimated_eval_tricount(objects)
+-    except Exception as e:
+-        logger.warning(f"Could not count triangles for render metrics: {e}")
+-        base_tris, subdiv_tris = 0, 0
+-
+-    data["generator_times"] = generator_times
+-    data["base_tris"] = base_tris
+-    data["subdiv_tris"] = subdiv_tris
+-    data["render_time_sec"] = round(render_time_sec, 3)
++    if pf.context.globals.current_trace_level is None:
++        try:
++            objects = data["objects"]
++            base_tris = 0
++            for obj in objects:
++                item = obj.item()
++                if item.type != "MESH":
++                    continue
++                mesh = item.data
++                base_tris += len(mesh.loops) - 2 * len(mesh.polygons)
++            subdiv_tris, _ = estimated_eval_tricount(objects)
++        except Exception as e:
++            logger.warning(f"Could not count triangles for render metrics: {e}")
++            base_tris, subdiv_tris = 0, 0
++
++        # These are measurements of the run, not parameters of the scene:
++        # wall-clock times and realized triangle counts vary run to run, so
++        # they must not become constants of the traced graph, or the same
++        # seed would not serialize to the same bytes.
++        data["generator_times"] = generator_times
++        data["base_tris"] = base_tris
++        data["subdiv_tris"] = subdiv_tris
++        data["render_time_sec"] = round(render_time_sec, 3)
+     return {k: v for k, v in data.items() if k not in pipeline_parameters}
+ 
+ 
+diff --git a/src/infinigen2/graph_json.py b/src/infinigen2/graph_json.py
+index 52c8f78..7615522 100644
+--- a/src/infinigen2/graph_json.py
++++ b/src/infinigen2/graph_json.py
+@@ -8,6 +8,7 @@
+ import dataclasses
+ import json
+ import logging
++import re
+ from enum import Enum
+ from pathlib import Path
+ from typing import Any
+@@ -56,7 +57,10 @@ def _serialize_value(value: Any) -> Any:
+     elif isinstance(value, (bool, int, float, str, type(None))):
+         return value
+     else:
+-        return {"$repr": repr(value)}
++        # repr() of objects with default __repr__ embeds their memory address,
++        # which differs run to run and even between processes; scrub it so the
++        # same seed serializes to identical bytes.
++        return {"$repr": re.sub(r"0x[0-9a-fA-F]+", "0xADDR", repr(value))}
+ 
+ 
+ def _serialize_arg(arg: Any, node_ids: dict[int, str]) -> Any:
+@@ -77,7 +81,17 @@ def _serialize_arg(arg: Any, node_ids: dict[int, str]) -> Any:
+ 
+ 
+ def _func_name(node: cg.FunctionCallNode) -> str:
+-    return f"{node.func.__module__}.{node.func.__qualname__}"
++    # Serialize by name, never by repr(): repr() of functions embeds their
++    # memory address, which changes between runs and breaks byte-stability.
++    # numpy ufuncs and builtins lack __module__/__qualname__, so fall back
++    # through whatever attributes they do have.
++    func = node.func
++    name = getattr(func, "__qualname__", None) or getattr(func, "__name__", None)
++    module = getattr(func, "__module__", None)
++    if module is None:
++        module = getattr(func, "__self__", None)
++        module = type(module).__module__ if module is not None else "builtins"
++    return f"{module}.{name}"
+ 
+ 
+ def _serialize_node(
+diff --git a/src/infinigen2/objects/random_primitives.py b/src/infinigen2/objects/random_primitives.py
+index d56571a..4ff35ec 100644
+--- a/src/infinigen2/objects/random_primitives.py
++++ b/src/infinigen2/objects/random_primitives.py
+@@ -11,6 +11,7 @@ import procfunc as pf
+ from procfunc.nodes import types as t
+ 
+ from infinigen2.shaders.dev import bsdf_simple_rand
++from infinigen2.util.tracing import is_tracing
+ from infinigen2.shaders.functionality_lists import all_materials_rand
+ from infinigen2.util.mesh import crease_by_angle
+ 
+@@ -370,10 +371,15 @@ def primitive_with_effect_rand(
+     aspect_z = pf.random.uniform(rng_aspect, 0.6, 1.6)
+     s = 1.0
+     if target_size is not None:
+-        dims = obj.item().dimensions
+-        current_max = max(dims.x * aspect_x, dims.y * aspect_y, dims.z * aspect_z)
+-        if current_max > 0:
+-            s = target_size / current_max
++        if is_tracing():
++            # The realized dimensions this scales against do not exist while
++            # tracing; the fit-to-size scale is applied at render time.
++            pass
++        else:
++            dims = obj.item().dimensions
++            current_max = max(dims.x * aspect_x, dims.y * aspect_y, dims.z * aspect_z)
++            if current_max > 0:
++                s = target_size / current_max
+     pf.ops.object.set_transform(
+         obj, scale=pf.Vector((s * aspect_x, s * aspect_y, s * aspect_z))
+     )
+diff --git a/src/infinigen2/scenes/placement/collision.py b/src/infinigen2/scenes/placement/collision.py
+index 226ac64..25cec13 100644
+--- a/src/infinigen2/scenes/placement/collision.py
++++ b/src/infinigen2/scenes/placement/collision.py
+@@ -17,6 +17,8 @@ import numpy as np
+ import procfunc as pf
+ import trimesh
+ 
++from infinigen2.util.tracing import is_tracing
++
+ __all__ = [
+     "CollisionSet",
+     "any_self_collision",
+@@ -166,9 +168,12 @@ def _sync_transforms(col: CollisionSet) -> None:
+ 
+ 
+ def n_colliders(col: CollisionSet) -> int:
++    if is_tracing():
++        return 0
+     return len(col.object_names)
+ 
+ 
++@pf.tracer.primitive
+ def collision_set(
+     objs: Sequence[pf.Object], cache: CollisionSet | None = None
+ ) -> CollisionSet:
+@@ -225,6 +230,10 @@ def collision_set(
+ 
+ 
+ def intersection_test(col: CollisionSet, obj: pf.Object) -> bool:
++    if is_tracing():
++        # Colliders and meshes do not exist while tracing; assume no overlap
++        # so traced control flow follows the "placement accepted" branch.
++        return False
+     if n_colliders(col) == 0:
+         return False
+     if not _is_collidable_object(obj):
+@@ -264,6 +273,8 @@ def box_intersection_test(
+     transform: np.ndarray,
+     size: float | tuple[float, float, float] = 1.0,
+ ) -> bool:
++    if is_tracing():
++        return False
+     if n_colliders(col) == 0:
+         return False
+     bpy.context.view_layer.update()
+@@ -282,6 +293,8 @@ def box_intersection_test(
+ 
+ def any_self_collision(col: CollisionSet) -> bool:
+     """Return True if any two objects in the set currently intersect each other."""
++    if is_tracing():
++        return False
+     if n_colliders(col) < 2:
+         return False
+     bpy.context.view_layer.update()
+@@ -293,6 +306,12 @@ def raycast(
+     col: CollisionSet, ray_origins: np.ndarray, ray_directions: np.ndarray
+ ) -> Any:
+     """Raycast over the combined mesh from tracked colliders."""
++    if is_tracing():
++        return (
++            np.empty((0, 3)),
++            np.empty((0,), dtype=np.int64),
++            np.empty((0,), dtype=np.int64),
++        )
+     if n_colliders(col) == 0:
+         return (
+             np.empty((0, 3)),
+diff --git a/src/infinigen2/scenes/placement/culling.py b/src/infinigen2/scenes/placement/culling.py
+index ad8287a..e0f1147 100644
+--- a/src/infinigen2/scenes/placement/culling.py
++++ b/src/infinigen2/scenes/placement/culling.py
+@@ -11,6 +11,7 @@ import procfunc as pf
+ 
+ from infinigen2.scenes.placement import collision as ccol
+ from infinigen2.scenes.placement.retry import repeat_attempts
++from infinigen2.util.tracing import is_tracing
+ 
+ __all__ = [
+     "keep_non_colliding",
+@@ -31,7 +32,12 @@ def keep_non_colliding(
+     """Keep each item whose `key(item)` mesh doesn't collide with `colliders` or an
+     already-kept item, folding kept meshes into the set. Skips Nones; rejected items
+     are dropped (not deleted) and removed later by scene autocleanup.
++
++    While tracing, collision outcomes are unknown, so every non-None item is
++    assumed kept and the collider set is threaded through unchanged.
+     """
++    if is_tracing():
++        return [item for item in items if item is not None], colliders
+     kept: list[T] = []
+     for item in items:
+         if item is None:
+@@ -65,7 +71,12 @@ def keep_unobstructed(
+ ) -> list[T]:
+     """Drop each item whose `key(item)` center a collider separates from `center`
+     (e.g. a wall between a rug and the sofa, or beyond a wall-snapped table). Reads
+-    colliders but does not update them; skips Nones."""
++    colliders but does not update them; skips Nones.
++
++    While tracing, obstruction is unknown, so every non-None item is assumed
++    visible from `center`."""
++    if is_tracing():
++        return [item for item in items if item is not None]
+     kept: list[T] = []
+     for item in items:
+         if item is None:
+@@ -95,7 +106,14 @@ def place_surrounding(
+     `colliders`, and re-sample the whole arrangement until it is internally clear and
+     at least `min_kept` survive. `colliders` must exclude `parent` so the obstruction
+     ray sees the wall behind it, not the parent itself. Suits chairs around a dining
+-    table or stools around a kitchen island."""
++    table or stools around a kitchen island.
++
++    While tracing, culling outcomes are unknown; the first arrangement is
++    assumed to survive in full."""
++    if is_tracing():
++        rngs = rng.spawn(attempts)
++        items = arrange_fn(rngs[0], parent)
++        return [item for item in items if item is not None], colliders
+     pmin, pmax = (
+         np.array(v) for v in pf.ops.attr.bbox_min_max(parent, global_coords=True)
+     )
+diff --git a/src/infinigen2/scenes/placement/distribute.py b/src/infinigen2/scenes/placement/distribute.py
+index ee0ce92..1e85b8f 100644
+--- a/src/infinigen2/scenes/placement/distribute.py
++++ b/src/infinigen2/scenes/placement/distribute.py
+@@ -11,6 +11,7 @@ import procfunc as pf
+ 
+ from infinigen2.scenes.placement import collision as ccol
+ from infinigen2.util.instance import instances_on_line
++from infinigen2.util.tracing import is_tracing
+ from infinigen2.util.scene_cleanup import delete_object
+ 
+ __all__ = [
+@@ -51,6 +52,7 @@ def _templates_by_stem(
+     return by_stem
+ 
+ 
++@pf.tracer.primitive
+ def propagate_modifiers_to_instances(
+     templates: list[pf.MeshObject], instances: list[pf.MeshObject]
+ ) -> None:
+@@ -176,6 +178,16 @@ def distribute_in_bbox(
+     all_max = np.asarray(bbox[1], dtype=float)
+     center = (all_min + all_max) / 2
+ 
++    if is_tracing():
++        # A realized object's extents are unknown while tracing, so treat every
++        # object as a point: sample one location per object inside the bbox
++        # (keeping the same number of RNG draws) and skip the in-place
++        # location mutation, which needs the realized object.
++        obj_rngs = rng.spawn(len(objects))
++        for i in range(len(objects)):
++            _uniform_location(obj_rngs[i], all_min, all_max)
++        return objects
++
+     check = colliders is not None and ccol.n_colliders(colliders) > 0
+     obj_rngs = rng.spawn(len(objects))
+     for i, obj in enumerate(objects):
+diff --git a/src/infinigen2/scenes/placement/snap.py b/src/infinigen2/scenes/placement/snap.py
+index 7d18508..0b2fa79 100644
+--- a/src/infinigen2/scenes/placement/snap.py
++++ b/src/infinigen2/scenes/placement/snap.py
+@@ -24,6 +24,7 @@ def _project(a, b):
+     return (np.dot(a, b) / np.dot(b, b)) * b
+ 
+ 
++@pf.tracer.primitive
+ def snap_to_plane(
+     child: pf.Object,
+     parent: pf.Object,
+diff --git a/src/infinigen2/scenes/room/ceiling_features.py b/src/infinigen2/scenes/room/ceiling_features.py
+index 124f883..6a65d8c 100644
+--- a/src/infinigen2/scenes/room/ceiling_features.py
++++ b/src/infinigen2/scenes/room/ceiling_features.py
+@@ -441,6 +441,7 @@ def ceiling_light_bars_rand(
+     return cutout.geom, backs, sills, cutout.aliases, lights
+ 
+ 
++@pf.tracer.primitive
+ @pf.tracer.grammar
+ def ceiling_feature_rand(
+     rng: pf.RNG,
+diff --git a/src/infinigen2/scenes/room/decoration_objects.py b/src/infinigen2/scenes/room/decoration_objects.py
+index 061d67a..0cd2ca3 100644
+--- a/src/infinigen2/scenes/room/decoration_objects.py
++++ b/src/infinigen2/scenes/room/decoration_objects.py
+@@ -24,6 +24,7 @@ import procfunc as pf
+ from procfunc.nodes import types as t
+ 
+ from infinigen2.objects import boulder, bowl, lamp, plant_pot, random_primitives, vase
++from infinigen2.util.tracing import is_tracing
+ from infinigen2.scenes.placement import collision as ccol
+ from infinigen2.scenes.placement.culling import keep_non_colliding
+ from infinigen2.scenes.placement.distribute import propagate_modifiers_to_instances
+@@ -535,18 +536,36 @@ def decoration_smallobj_rand(rng: pf.RNG) -> MeshResult:
+     return func(rng_object)
+ 
+ 
++class _TracedCollectionStandin:
++    """Stand-in for pf.Collection while tracing.
++
++    A real pf.Collection links realized bpy objects into a new bpy collection,
++    which cannot exist before render time; the traced graph only needs the
++    pool of meshes to flow through.
++    """
++
++    def __init__(self, objects: list):
++        self.objects = objects
++
++    def __iter__(self):
++        return iter(self.objects)
++
++
+ def _decoration_collection(results: list[MeshResult]) -> pf.Collection:
+     meshes = []
+     for i, result in enumerate(results):
+         mesh = result.mesh
+-        pf.ops.mesh.transform_apply(mesh)
+-        bmin, _ = pf.ops.attr.bbox_min_max(mesh, global_coords=False)
+-        pf.ops.object.set_transform(mesh, location=(0, 0, -bmin[2]))
+-        pf.ops.mesh.transform_apply(mesh)
+-        # index keeps the stem unique, which propagate_modifiers_to_instances requires
+-        label = mesh.item().name.split(".")[0]
+-        mesh.item().data.name = f"{label}_{i:03d}"
++        if not is_tracing():
++            pf.ops.mesh.transform_apply(mesh)
++            bmin, _ = pf.ops.attr.bbox_min_max(mesh, global_coords=False)
++            pf.ops.object.set_transform(mesh, location=(0, 0, -bmin[2]))
++            pf.ops.mesh.transform_apply(mesh)
++            # index keeps the stem unique, which propagate_modifiers_to_instances requires
++            label = mesh.item().name.split(".")[0]
++            mesh.item().data.name = f"{label}_{i:03d}"
+         meshes.append(mesh)
++    if is_tracing():
++        return _TracedCollectionStandin(meshes)
+     return pf.Collection(meshes)
+ 
+ 
+@@ -787,6 +806,13 @@ def _place_on_floor(
+     child: MeshResult,
+     floor: pf.MeshObject,
+ ) -> None:
++    if is_tracing():
++        # The floor and child bboxes this places against are realized
++        # geometry; whether the x/y draws even happen depends on them. Draw
++        # only the always-drawn yaw so this rng tracks a render, and leave
++        # the transform itself to render time.
++        pf.random.uniform(rng, 0.0, 2.0 * np.pi)
++        return
+     floor_min, floor_max = pf.ops.attr.bbox_min_max(floor, global_coords=True)
+     child_min, child_max = pf.ops.attr.bbox_min_max(child.mesh, global_coords=False)
+     half_x = (child_max[0] - child_min[0]) * 0.5
+@@ -929,9 +955,11 @@ def decorate_floor_objects_rand(
+         floor_colliders=floor_colliders,
+         wall_colliders=wall_colliders,
+     )
++    # `storage` may be a single graph node while tracing, when its contents
++    # are not yet realized; treat it as no preferred storage then.
+     preferred_storage = [
+         obj
+-        for obj in storage or []
++        for obj in (storage if isinstance(storage, list) else [])
+         if back_face_grounded(
+             obj,
+             colliders=wall_colliders,
+@@ -998,8 +1026,14 @@ def decorate_surface_objects_rand(
+ ) -> DecorationObjectsResult:
+     support_tops = [] if support_tops is None else support_tops
+     storages = support_tops if storages is None else storages
+-    storage_items = {obj.item() for obj in storages}
+-    parents = [obj for obj in support_tops if obj.item() in storage_items]
++    if is_tracing():
++        # Which supports are also storages is a realized-identity question,
++        # unanswerable while tracing; with no known parents the decorations
++        # defer entirely to render time.
++        parents = []
++    else:
++        storage_items = {obj.item() for obj in storages}
++        parents = [obj for obj in support_tops if obj.item() in storage_items]
+     if not parents:
+         return DecorationObjectsResult(objects, [], colliders)
+ 
+diff --git a/src/infinigen2/scenes/room/desk_setup.py b/src/infinigen2/scenes/room/desk_setup.py
+index 98f77d9..d7bf60d 100644
+--- a/src/infinigen2/scenes/room/desk_setup.py
++++ b/src/infinigen2/scenes/room/desk_setup.py
+@@ -141,7 +141,9 @@ def desk_setup_rand(
+     chair_result = chair_func(rng_chair_gen)
+     chair_result.mesh.item().name = "desk_chair"
+ 
+-    if wall_planes:
++    # While tracing `wall_planes` may be a single graph node whose contents
++    # are not yet realized; the wall-snap placement defers to render time.
++    if isinstance(wall_planes, list) and wall_planes:
+         wall_margin = pf.random.uniform(rng_desk_pose, 0.03, 0.10)
+         grounded = functools.partial(
+             back_face_grounded,
+@@ -169,7 +171,7 @@ def desk_setup_rand(
+     monitors, _ = keep_non_colliding(monitors, colliders, key=lambda mesh: mesh)
+ 
+     chair_colliders = ccol.collision_set(
+-        [*colliders.objs, desk_result.mesh, *monitors],
++        colliders.objs + [desk_result.mesh, *monitors],
+         cache=colliders,
+     )
+     chair_result = retry_place(
+diff --git a/src/infinigen2/scenes/room/room.py b/src/infinigen2/scenes/room/room.py
+index f26daa5..f9d1259 100644
+--- a/src/infinigen2/scenes/room/room.py
++++ b/src/infinigen2/scenes/room/room.py
+@@ -65,6 +65,7 @@ from infinigen2.scenes.room.wall_mounts import (
+ from infinigen2.scenes.room.wall_storage_setup import wall_storage_setup_rand
+ from infinigen2.shaders.functionality_lists import wall_material_rand
+ from infinigen2.util.scene_cleanup import delete_object
++from infinigen2.util.tracing import is_tracing
+ 
+ __all__ = [
+     "RoomResult",
+@@ -192,6 +193,7 @@ def _decoration_objects(result: WallResult) -> list[pf.MeshObject]:
+     return [obj for objects in result.decorations.values() for obj in objects]
+ 
+ 
++@pf.tracer.primitive
+ @pf.tracer.grammar
+ def room_walls_rand(
+     rng: pf.RNG,
+@@ -309,6 +311,24 @@ def room_walls_rand(
+     )
+ 
+ 
++@pf.tracer.primitive
++def _ceiling_lights_rand(
++    rng: pf.RNG,
++    ceiling_lights: list[pf.LightObject],
++    wall_lights: list[pf.LightObject],
++) -> list[pf.LightObject]:
++    """Pick between the ceiling lights and no ceiling lights.
++
++    Which one is used depends on whether the walls ended up carrying lights
++    of their own, and that is only known once the walls have been built. The
++    tracer cannot see that, so this decision is opaque to it.
++    """
++    return pf.control.choice(
++        rng,
++        [(ceiling_lights, 5.0), ([] if wall_lights else ceiling_lights, 1.0)],
++    )
++
++
+ def _livingroom_dimensions_rand(rng: pf.RNG) -> pf.Vector:
+     rng_area, rng_aspect, rng_height = rng.spawn(3)
+     area = pf.random.clip_gaussian(rng_area, 22.0, 5.0, 15.0, 30.0)
+@@ -412,18 +432,18 @@ def room_unfurnished_rand(
+         rng_walls, shape, [door] + plain_walls, rotated[n_plain_walls:], wall_materials
+     )
+     skirting = skirting_rand(rng_skirting, walls=walls.wall_planes + [shape.walls])
+-    for wall_plane in walls.wall_planes:
+-        overlap_wall_plane_edges(wall_plane, ROOM_WALL_THICKNESS)
++    if not is_tracing():
++        # Overlapping the wall-plane edges mutates realized meshes; while
++        # tracing the wall planes are graph nodes, so defer to render time.
++        for wall_plane in walls.wall_planes:
++            overlap_wall_plane_edges(wall_plane, ROOM_WALL_THICKNESS)
+     sky = sky_lighting.sky_hosek_wilkie_with_sun_lamp_rand(rng_sky)
+ 
+     structure = (
+         walls.all_objects + [shape.floor, ceiling.ceiling] + ceiling.light_meshes
+     )
+     lights = (
+-        pf.control.choice(
+-            rng_ceiling_lights,
+-            [(ceiling.lights, 5.0), ([] if walls.lights else ceiling.lights, 1.0)],
+-        )
++        _ceiling_lights_rand(rng_ceiling_lights, ceiling.lights, walls.lights)
+         + walls.lights
+         + sky.lights
+     )
+@@ -442,6 +462,7 @@ def room_unfurnished_rand(
+     )
+ 
+ 
++@pf.tracer.primitive
+ def _with_objects(
+     colliders: ccol.CollisionSet,
+     objects: list[pf.MeshObject],
+@@ -478,11 +499,20 @@ def decorate_room_small_objects_rand(
+         rng_nonstorage_container_fraction,
+         rng_nonstorage_containers,
+     ) = rng.spawn(11)
+-    storage_objects = set(storages)
+-    support_storages = [obj for obj in support_tops if obj in storage_objects]
+-    support_nonstorages = [obj for obj in support_tops if obj not in storage_objects]
+-    container_storages = [obj for obj in containers if obj in storage_objects]
+-    container_nonstorages = [obj for obj in containers if obj not in storage_objects]
++    if is_tracing():
++        # Which supports/containers are storages is a realized-identity
++        # question, unanswerable while tracing; with no scatter targets the
++        # scatters below no-op while their grammar draws are still recorded.
++        support_storages = []
++        support_nonstorages = []
++        container_storages = []
++        container_nonstorages = []
++    else:
++        storage_objects = set(storages)
++        support_storages = [obj for obj in support_tops if obj in storage_objects]
++        support_nonstorages = [obj for obj in support_tops if obj not in storage_objects]
++        container_storages = [obj for obj in containers if obj in storage_objects]
++        container_nonstorages = [obj for obj in containers if obj not in storage_objects]
+ 
+     if nonstorage_collection is None:
+         nonstorage_collection = decoration_collection_primitives_rand(
+diff --git a/src/infinigen2/scenes/room/room_shape.py b/src/infinigen2/scenes/room/room_shape.py
+index 5b2bd63..e7cd5ab 100644
+--- a/src/infinigen2/scenes/room/room_shape.py
++++ b/src/infinigen2/scenes/room/room_shape.py
+@@ -123,20 +123,33 @@ def room_dimensions_rand(
+     return dimensions
+ 
+ 
++def _mask_selects_any(mask) -> bool:
++    """Whether `mask` selects at least one face.
++
++    Under the tracer `mask` is a procfunc Proxy: it stands for a value that
++    only exists at render time, so the test cannot be evaluated. We report
++    True, i.e. we assume every wall group owns a flat face. That assumption
++    holds for the rooms this module builds - every wall has exactly one flat
++    face - and it keeps the traced graph and the rendered scene describing the
++    same set of separations.
++    """
++    if isinstance(mask, np.ndarray):
++        return bool(mask.any())
++    return True
++
++
+ def _split_flat_walls(
+     walls_mesh: pf.MeshObject,
++    n_walls: int,
+ ) -> list[pf.MeshObject]:
+-    wall_idx = pf.ops.attr.read_attribute(walls_mesh, "wall_idx", domain="FACE")
+-    uniq_idx = np.unique(wall_idx)
+-
+     results = []
+-    for idx in uniq_idx:
++    for idx in range(n_walls):
+         wall_idx = pf.ops.attr.read_attribute(walls_mesh, "wall_idx", domain="FACE")
+         is_wall_flat = pf.ops.attr.read_attribute(
+             walls_mesh, "is_wall_flat", domain="FACE"
+         )
+         mask = (wall_idx == idx) * is_wall_flat
+-        if not mask.any():
++        if not _mask_selects_any(mask):
+             continue
+         wall = pf.ops.mesh.separate_mask(walls_mesh, face_mask=mask)
+         results.append(wall)
+@@ -231,8 +244,9 @@ def room_shape_rand(
+         domain="EDGE",
+     )
+ 
+-    flat_walls = _split_flat_walls(walls_mesh)
+-    camera = framing.camera_in_room_corner(floor, float(dimensions.z))
++    flat_walls = _split_flat_walls(walls_mesh, n_walls=edge_curve.n_walls)
++    # No float() here: under the tracer dimensions.z is a node, not a number.
++    camera = framing.camera_in_room_corner(floor, dimensions.z)
+ 
+     return RoomShapeResult(
+         walls=walls_mesh,
+diff --git a/src/infinigen2/scenes/room/skirting.py b/src/infinigen2/scenes/room/skirting.py
+index f706ce9..fb9d364 100644
+--- a/src/infinigen2/scenes/room/skirting.py
++++ b/src/infinigen2/scenes/room/skirting.py
+@@ -133,6 +133,7 @@ def skirting_on_walls_rand(
+     return [skirt]
+ 
+ 
++@pf.tracer.primitive
+ @pf.tracer.grammar
+ def skirting_rand(
+     rng: pf.RNG,
+diff --git a/src/infinigen2/scenes/room/sofa_setup.py b/src/infinigen2/scenes/room/sofa_setup.py
+index b0fbff7..3c492ce 100644
+--- a/src/infinigen2/scenes/room/sofa_setup.py
++++ b/src/infinigen2/scenes/room/sofa_setup.py
+@@ -18,6 +18,8 @@ from infinigen2.scenes.placement import collision as ccol
+ from infinigen2.scenes.placement.culling import keep_non_colliding, keep_unobstructed
+ from infinigen2.scenes.placement.distribute import instances_along_line
+ from infinigen2.scenes.placement.snap import snap_to_plane
++from infinigen2.scenes.room.wall_base import name_objects
++from infinigen2.util.tracing import is_tracing
+ from infinigen2.scenes.setup_utils import (
+     MeshResult,
+     back_face_grounded,
+@@ -243,8 +245,7 @@ def _throw_pillows_rand(rng: pf.RNG, sofa: SofaResult) -> list[pf.MeshObject]:
+         count,
+         (0.0, math.pi / 2 - lean, 0.0),
+     )
+-    for p in pillows:
+-        p.item().name = cushion.cushion_throw_pillow_rand.__name__
++    name_objects(pillows, cushion.cushion_throw_pillow_rand.__name__)
+     return pillows
+ 
+ 
+@@ -381,10 +382,16 @@ def _sofas_around_rug_rand(
+         rng_pillows,
+     ) = rng.spawn(6)
+     rug_obj = rug_objs[0]
+-    cmin, cmax = (
+-        np.array(bound)
+-        for bound in pf.ops.attr.bbox_min_max(rug_obj, global_coords=True)
+-    )
++    if is_tracing():
++        # The rug's realized bbox is unknown while tracing; assume a rug
++        # centered at the origin so `center` stays a concrete point for the
++        # placement calls below (which defer to render-time geometry anyway).
++        cmin = cmax = np.zeros(3)
++    else:
++        cmin, cmax = (
++            np.array(bound)
++            for bound in pf.ops.attr.bbox_min_max(rug_obj, global_coords=True)
++        )
+     center = (cmin + cmax) / 2
+ 
+     placed_sofas = []
+diff --git a/src/infinigen2/scenes/room/wall_base.py b/src/infinigen2/scenes/room/wall_base.py
+index 6f477f2..0815978 100644
+--- a/src/infinigen2/scenes/room/wall_base.py
++++ b/src/infinigen2/scenes/room/wall_base.py
+@@ -12,6 +12,7 @@ from infinigen2.scenes.placement import collision as ccol
+ from infinigen2.shaders.functionality_lists import wall_material_rand
+ from infinigen2.util import mesh as mesh_util
+ from infinigen2.util.scene_cleanup import delete_object
++from infinigen2.util.tracing import is_tracing
+ 
+ __all__ = [
+     "ROOM_SUBSURF_LEVELS",
+@@ -164,6 +165,10 @@ def _name_materials(obj: pf.MeshObject, base: str) -> None:
+ 
+ 
+ def name_objects(objs: list[pf.MeshObject], name: str) -> list[pf.MeshObject]:
++    if is_tracing():
++        # Object names live on realized bpy datablocks, which do not exist
++        # while tracing; naming is cosmetic, so skip it.
++        return objs
+     for i, obj in enumerate(objs):
+         object_name = f"{name}_{i:02d}"
+         obj.item().name = object_name
+@@ -228,6 +233,7 @@ def plain_wall(
+     return wall, wall_thick
+ 
+ 
++@pf.tracer.primitive
+ @pf.tracer.grammar
+ def wall_plain_rand(
+     rng: pf.RNG,
+diff --git a/src/infinigen2/scenes/room/wall_cutouts.py b/src/infinigen2/scenes/room/wall_cutouts.py
+index ed399b8..58fbbe7 100644
+--- a/src/infinigen2/scenes/room/wall_cutouts.py
++++ b/src/infinigen2/scenes/room/wall_cutouts.py
+@@ -930,6 +930,7 @@ def wall_cubby_rand(
+     return pf.control.choice(rng, [(_keep_cabinets, 1.0), (_drop_cabinets, 2.0)])()
+ 
+ 
++@pf.tracer.primitive
+ @pf.tracer.grammar
+ def wall_doors_rand(
+     rng: pf.RNG,
+diff --git a/src/infinigen2/scenes/setup_utils.py b/src/infinigen2/scenes/setup_utils.py
+index 381dd23..2558831 100644
+--- a/src/infinigen2/scenes/setup_utils.py
++++ b/src/infinigen2/scenes/setup_utils.py
+@@ -13,6 +13,7 @@ import shapely
+ 
+ from infinigen2.objects import sofa, storage, table
+ from infinigen2.scenes.placement import collision as ccol
++from infinigen2.util.tracing import is_tracing
+ from infinigen2.scenes.placement.snap import snap_to_plane
+ 
+ __all__ = [
+@@ -70,6 +71,13 @@ def jitter_object_rotation_rand(
+     attempts: int = 12,
+ ) -> None:
+     """Retry yaw against every other object in `colliders`."""
++    if is_tracing():
++        # The realized pose and bbox this jiggles against are unknown while
++        # tracing; consume the first attempt's draw so the stream matches a
++        # render that accepts the first yaw.
++        first = rng.spawn(attempts)[0]
++        pf.random.uniform(first, -max_angle, max_angle)
++        return
+     item = obj.item()
+     location = tuple(item.location)
+     rotation = tuple(item.rotation_euler)
+@@ -173,6 +181,8 @@ def standalone_wall_planes(
+ 
+ 
+ def center_inside(region: shapely.Polygon, obj: pf.MeshObject) -> bool:
++    if is_tracing():
++        return True
+     lower, upper = pf.ops.attr.bbox_min_max(obj, global_coords=True)
+     center = shapely.Point((lower[0] + upper[0]) / 2, (lower[1] + upper[1]) / 2)
+     return region.contains(center)
+@@ -186,6 +196,8 @@ def _footprint(obj: pf.MeshObject) -> shapely.Polygon:
+ def clear_of(
+     obj: pf.MeshObject, others: Sequence[pf.MeshObject], distance: float
+ ) -> bool:
++    if is_tracing():
++        return True
+     footprint = _footprint(obj)
+     return all(footprint.distance(_footprint(o)) >= distance for o in others)
+ 
+@@ -203,7 +215,16 @@ def retry_place(
+     (and satisfies `accept_fn`, if given), or give up and return None. Reads
+     `colliders` but never extends it; keep_non_colliding owns updates and
+     intra-batch collisions.
++
++    While tracing, collision outcomes are unknown, so the first attempt is
++    assumed to succeed: place once, then return the child. The stream position
++    after a traced retry_place therefore matches a render whose first placement
++    cleared; renders that retry consume extra draws.
+     """
++    if is_tracing():
++        first = rng.spawn(attempts)[0]
++        place_fn(first, child, **kwargs)
++        return child
+     for r in rng.spawn(attempts):
+         place_fn(r, child, **kwargs)
+         if ccol.intersection_test(colliders, child.mesh):
+@@ -273,6 +294,8 @@ def bbox_face_grounded(
+     side: str,
+     max_distance: float,
+ ) -> bool:
++    if is_tracing():
++        return True
+     bmin, bmax = pf.ops.attr.bbox_min_max(obj, global_coords=False)
+     axis, sign = {
+         "back": (0, -1.0),
+diff --git a/src/infinigen2/util/scene_cleanup.py b/src/infinigen2/util/scene_cleanup.py
+index 2cecb0a..cfb6ccb 100644
+--- a/src/infinigen2/util/scene_cleanup.py
++++ b/src/infinigen2/util/scene_cleanup.py
+@@ -18,6 +18,7 @@ __all__ = [
+ logger = logging.getLogger(__name__)
+ 
+ 
++@pf.tracer.primitive
+ def delete_objects(objs: Iterable[bpy.types.Object]) -> None:
+     unique = list({obj.as_pointer(): obj for obj in objs}.values())
+     if not unique:
+@@ -34,6 +35,7 @@ def delete_objects(objs: Iterable[bpy.types.Object]) -> None:
+         bpy.data.batch_remove(orphans)
+ 
+ 
++@pf.tracer.primitive
+ def delete_object(obj: bpy.types.Object) -> None:
+     delete_objects([obj])
+ 
+diff --git a/src/infinigen2/util/tracing.py b/src/infinigen2/util/tracing.py
+new file mode 100644
+index 0000000..2652fc9
+--- /dev/null
++++ b/src/infinigen2/util/tracing.py
+@@ -0,0 +1,17 @@
++# Copyright (C) 2026, Princeton University.
++# This source code is licensed under the BSD-3-Clause license found in the LICENSE file in the root directory of this source tree.
++
++import procfunc as pf
++
++
++def is_tracing() -> bool:
++    """True while procfunc's tracer is capturing a compute graph.
++
++    Scene code that queries realized geometry (collision tests, bbox reads,
++    snapping) cannot be traced: the geometry does not exist yet, so its
++    attributes are graph proxies with no runtime value. Such code branches on
++    this flag and takes a trace-time assumption instead, so that the traced
++    graph records the surrounding grammar. See scenes/placement/*.py for the
++    assumptions themselves.
++    """
++    return pf.context.globals.current_trace_level is not None

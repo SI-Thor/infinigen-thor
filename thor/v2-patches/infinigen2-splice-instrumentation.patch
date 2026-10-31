@@ -1,0 +1,244 @@
+diff --git a/src/infinigen2/util/splice.py b/src/infinigen2/util/splice.py
+new file mode 100644
+---
++++ b/src/infinigen2/util/splice.py
+@@ -0,0 +1,239 @@
++# Copyright (C) 2026, Princeton University.
++# This source code is licensed under the BSD-3-Clause license found in the LICENSE file in the root directory of this source tree.
++
++"""Round-3 splice instrumentation: which builders the subtree memo wraps.
++
++The memo itself is engine machinery and lives in ``procfunc.subtree_memo``
++(the round-3 procfunc patch). This module is the *scene-side* half: the
++policy for which infinigen2 functions may be memoised, and the installer
++that swaps the wrappers into every loaded namespace that holds a reference
++(the defining module and every importer — the same reference-patching
++problem procfunc's tracer solves with search scopes).
++
++Policy, in one sentence: **every builder function under the scene and object
++layers is memoisable; entry points, mutators and realised-geometry services
++are not.**
++
++* the entry point actually being generated — the top of the chain whose
++  hit would be the stage cache again rather than a splice (upstream's
++  manifest registers nearly every builder as a demo entry, so "manifest
++  entry" is not the right test; the driver passes the chain it runs);
++* mutators — anything whose effect is not its return value: the placement
++  services (``scenes/placement/*`` snap/collide/cull/retry — they move
++  objects, reject candidates, or read realised geometry mid-placement),
++  naming/cleanup helpers, and functions whose name declares a side effect;
++* fine numeric helpers stay unwrapped by default, not for correctness but
++  because hashing their arguments costs more than they do — the curated
++  list below is the measured set (see ROUND3.md §2); override it with
++  ``INFINIGEN_SPLICE_TARGETS`` (a JSON list of ``"module:qualname"``, or
++  ``"module:*"`` for a whole module).
++
++The wrappers are inert unless a memo session is active, so a normal
++generation is byte-for-byte what it was without this module imported.
++"""
++
++from __future__ import annotations
++
++import importlib
++import json
++import logging
++import os
++import sys
++from typing import Callable
++
++logger = logging.getLogger(__name__)
++
++#: Modules whose builder functions are memoisation targets by default.
++_BUILDER_MODULES = [
++    "infinigen2.scenes.room.room",
++    "infinigen2.scenes.room.room_shape",
++    "infinigen2.scenes.room.wall_base",
++    "infinigen2.scenes.room.wall_cutouts",
++    "infinigen2.scenes.room.wall_mounts",
++    "infinigen2.scenes.room.skirting",
++    "infinigen2.scenes.room.ceiling_features",
++    "infinigen2.scenes.room.sofa_setup",
++    "infinigen2.scenes.room.desk_setup",
++    "infinigen2.scenes.room.wall_storage_setup",
++    "infinigen2.scenes.room.decoration_objects",
++    "infinigen2.scenes.room.cocktail_table_setup",
++    "infinigen2.scenes.room.dining_table_setup",
++    "infinigen2.scenes.room.bed_setup",
++    "infinigen2.scenes.room.kitchen_setup",
++    "infinigen2.scenes.room.bathroom_setup",
++    "infinigen2.objects.ant_landscape",
++    "infinigen2.objects.bathroom_hardware",
++    "infinigen2.objects.bathtub",
++    "infinigen2.objects.bed",
++    "infinigen2.objects.boulder",
++    "infinigen2.objects.bowl",
++    "infinigen2.objects.ceiling_light",
++    "infinigen2.objects.chair",
++    "infinigen2.objects.cushion",
++    "infinigen2.objects.desk",
++    "infinigen2.objects.door",
++    "infinigen2.objects.drawer",
++    "infinigen2.objects.flower",
++    "infinigen2.objects.furniture_bases",
++    "infinigen2.objects.garments",
++    "infinigen2.objects.handles",
++    "infinigen2.objects.lamp",
++    "infinigen2.objects.leaf_broadleaf",
++    "infinigen2.objects.leaf_coord",
++    "infinigen2.objects.leaf_ginko",
++    "infinigen2.objects.leaf_maple",
++    "infinigen2.objects.leaf",
++    "infinigen2.objects.monitor",
++    "infinigen2.objects.phyllo_plant",
++    "infinigen2.objects.plant_pot",
++    "infinigen2.objects.random_primitives",
++    "infinigen2.objects.rug",
++    "infinigen2.objects.sink",
++    "infinigen2.objects.sofa",
++    "infinigen2.objects.storage",
++    "infinigen2.objects.table",
++    "infinigen2.objects.tap",
++    "infinigen2.objects.toilet",
++    "infinigen2.objects.vase",
++    "infinigen2.objects.wall_art",
++    "infinigen2.objects.window",
++]
++
++#: Function names never memoised (side effects or naming/cleanup).
++_NAME_EXCLUSIONS = {
++    "name_objects",
++    "delete_object",
++    "delete_objects",
++    "cleanup_except",
++    "clear_scene",
++}
++
++#: Substrings marking a mutator by name.
++_NAME_EXCLUDE_SUBSTRINGS = ("delete", "cleanup", "clear", "register", "unregister")
++
++
++def _manifest_entry_qualnames() -> set[str]:
++    from infinigen2 import GENERATORS_MANIFEST  # noqa: PLC0415
++
++    entries = set()
++    try:
++        names = None
++        it = getattr(GENERATORS_MANIFEST, "iterrows", None)
++        if callable(it):  # a DataFrame
++            names = GENERATORS_MANIFEST["name"].tolist()
++        elif isinstance(GENERATORS_MANIFEST, dict):
++            names = GENERATORS_MANIFEST.get("name", [])
++        else:
++            names = [
++                item["name"] if isinstance(item, dict) else item
++                for item in GENERATORS_MANIFEST
++            ]
++        for name in names or []:
++            if isinstance(name, str) and "." in name:
++                entries.add(name)
++    except Exception:
++        pass
++    return entries
++
++
++def default_targets(exclude: set[str] = frozenset()) -> list[str]:
++    """``module:qualname`` strings for every memoisable builder."""
++    targets = []
++    for mod_name in _BUILDER_MODULES:
++        try:
++            mod = importlib.import_module(mod_name)
++        except Exception as err:  # a module can drift between rounds
++            logger.debug(f"splice targets: cannot import {mod_name}: {err}")
++            continue
++        for attr, value in vars(mod).items():
++            if attr.startswith("_") or not callable(value) or isinstance(value, type):
++                continue
++            if getattr(value, "__module__", None) != mod_name:
++                continue  # imported, not defined here
++            qual = f"{mod_name}.{value.__qualname__}"
++            if qual in exclude:
++                continue  # the entry being generated: the stage, not a subtree
++            if attr in _NAME_EXCLUSIONS:
++                continue
++            if any(sub in attr for sub in _NAME_EXCLUDE_SUBSTRINGS):
++                continue
++            targets.append(f"{mod_name}:{value.__qualname__}")
++    return sorted(set(targets))
++
++
++def load_targets(exclude: set[str] = frozenset()) -> list[str]:
++    override = os.environ.get("INFINIGEN_SPLICE_TARGETS")
++    if override:
++        with open(override) as fh:
++            specs = [str(x) for x in json.load(fh)]
++        return [
++            s
++            for s in specs
++            if not any(s.partition(":")[0] + "." + s.partition(":")[2] == q for q in exclude)
++        ]
++    return default_targets(exclude)
++
++
++def install(targets: list[str] | None = None, exclude: set[str] = frozenset()) -> dict[str, int]:
++    """Wrap every target function in every loaded namespace.
++
++    ``exclude`` holds the qualnames of the generation chain being run — the
++    entry point(s) that must execute, not splice.
++
++    Returns ``{qualname: namespaces_patched}``. Idempotent: functions that
++    already carry ``_subtree_memo_orig`` keep their first wrapper.
++    """
++    from procfunc import subtree_memo  # noqa: PLC0415
++
++    if targets is None:
++        targets = load_targets(exclude)
++
++    wanted: dict[int, str] = {}  # id(orig func) -> qualname
++    expanded: list[tuple[str, Callable]] = []
++    for spec in targets:
++        mod_name, _, qual = spec.partition(":")
++        mod = importlib.import_module(mod_name)
++        if qual == "*":
++            for attr, value in vars(mod).items():
++                if callable(value) and getattr(value, "__module__", None) == mod_name:
++                    if not hasattr(value, "_subtree_memo_orig"):
++                        expanded.append((f"{mod_name}.{value.__qualname__}", value))
++            continue
++        obj = mod
++        for part in qual.split("."):
++            obj = getattr(obj, part)
++        expanded.append((f"{mod_name}.{qual}", obj))
++    for qualname, func in expanded:
++        if hasattr(func, "_subtree_memo_orig"):
++            continue
++        wanted[id(func)] = qualname
++
++    wrapped: dict[int, Callable] = {}
++    for fid, qual in wanted.items():
++        orig = next(f for q, f in expanded if q == qual)
++        wrapped[fid] = subtree_memo.wrap(qualname=qual)(orig)
++
++    patched: dict[str, int] = {q: 0 for q in wanted.values()}
++    for module in list(sys.modules.values()):
++        ns = getattr(module, "__dict__", None)
++        if not ns:
++            continue
++        for attr, value in list(ns.items()):
++            qual = wanted.get(id(value))
++            if qual is None:
++                continue
++            ns[attr] = wrapped[id(value)]
++            patched[qual] += 1
++
++    logger.info(
++        f"splice: wrapped {len(patched)} builder functions "
++        f"({sum(patched.values())} namespace references)"
++    )
++    return patched
++
++
++def memo():
++    """The process-wide SubtreeMemo (procfunc's)."""
++    from procfunc import subtree_memo  # noqa: PLC0415
++
++    return subtree_memo.MEMO

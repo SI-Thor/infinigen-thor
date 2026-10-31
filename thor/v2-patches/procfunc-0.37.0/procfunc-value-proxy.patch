@@ -1,0 +1,381 @@
+--- a/procfunc/compute_graph/proxy.py
++++ b/procfunc/compute_graph/proxy.py
+@@ -2,12 +2,72 @@
+ 
+ import operator
+ from dataclasses import dataclass
+-from typing import Generic, TypeVar
++from typing import Any, Generic, TypeVar
+ 
+ from .node import FunctionCallNode, GetAttributeNode, MethodCallNode, Node
+ 
+ T = TypeVar("T")
+ 
++_NOT_EVALUATED = object()
++
++
++def _maybe_value_proxy(node, value):
++    """Wrap a concretely-known `value` for `node`, unless it is itself a Proxy.
++
++    A Proxy result already carries its own (more precise) node, so wrapping it
++    would only hide its behavior behind ValueProxy, which does not forward
++    calls or attribute semantics.
++    """
++    if isinstance(value, Proxy):
++        return value
++    return ValueProxy(node, value)
++
++
++def _known_getattr(node, source_value, attr):
++    """Attribute access on a proxy whose source value is concretely known.
++
++    A fetched Proxy is returned as-is (it records its own node); a fetched
++    method becomes an AttributeProxy so its calls evaluate on the source value;
++    anything else is a known data attribute and stays value-aware.
++    """
++    try:
++        fetched = getattr(source_value, attr)
++    except Exception:
++        return AttributeProxy(node, source_value)
++    if isinstance(fetched, Proxy):
++        return fetched
++    if callable(fetched):
++        return AttributeProxy(node, source_value)
++    return ValueProxy(node, fetched)
++
++
++def _try_evaluate(func, *args, **kwargs):
++    """Evaluate `func` on the concrete values of `args`, if all are known.
++
++    Returns _NOT_EVALUATED if any operand has no known value, or if the
++    evaluation raises.
++    """
++    values = []
++    for a in args:
++        if isinstance(a, ValueProxy):
++            values.append(a.value)
++        elif isinstance(a, Proxy):
++            return _NOT_EVALUATED
++        else:
++            values.append(a)
++    kwvalues = {}
++    for k, v in kwargs.items():
++        if isinstance(v, ValueProxy):
++            kwvalues[k] = v.value
++        elif isinstance(v, Proxy):
++            return _NOT_EVALUATED
++        else:
++            kwvalues[k] = v
++    try:
++        return func(*values, **kwvalues)
++    except Exception:
++        return _NOT_EVALUATED
++
+ 
+ @dataclass
+ class Proxy(Generic[T]):
+@@ -24,7 +84,11 @@
+ 
+     def __getattr__(self, attr: str) -> "AttributeProxy":
+         node = GetAttributeNode(source=self.node, attribute_name=attr)
+-        return AttributeProxy(node)
++        # __dict__ rather than getattr, to avoid recursing through __getattr__
++        source_value = self.__dict__.get("value", _NOT_EVALUATED)
++        if isinstance(self, ValueProxy) and source_value is not _NOT_EVALUATED:
++            return _known_getattr(node, source_value, attr)
++        return AttributeProxy(node, source_value)
+ 
+     def __call__(self, *args, **kwargs) -> "Proxy":
+         raise NotImplementedError("Proxy.__call__ is not implemented")
+@@ -46,6 +110,9 @@
+             args=(self.node, idx_node),
+             kwargs={},
+         )
++        value = _try_evaluate(operator.getitem, self, idx)
++        if value is not _NOT_EVALUATED:
++            return _maybe_value_proxy(getitem_node, value)
+         return Proxy(getitem_node)
+ 
+     def __bool__(self):
+@@ -77,6 +144,7 @@
+     "__le__": operator.le,
+     "__gt__": operator.gt,
+     "__ge__": operator.ge,
++    "__matmul__": operator.matmul,
+ }
+ 
+ NODE_REFLECTABLE_METHODS = [
+@@ -110,6 +178,9 @@
+             args=(self.node, *node_args),
+             kwargs=node_kwargs,
+         )
++        value = _try_evaluate(operator_func, self, *args, **kwargs)
++        if value is not _NOT_EVALUATED:
++            return _maybe_value_proxy(node, value)
+         return Proxy(node)
+ 
+     setattr(cls, name, proxy_method)
+@@ -129,6 +200,9 @@
+             args=(rhs_node, self.node),
+             kwargs={},
+         )
++        value = _try_evaluate(operator_func, rhs, self)
++        if value is not _NOT_EVALUATED:
++            return _maybe_value_proxy(node, value)
+         return Proxy(node)
+ 
+     setattr(cls, f"__r{name}__", proxy_method)
+@@ -143,13 +217,66 @@
+     _add_proxy_reflection(Proxy, name)
+ 
+ 
++@dataclass(eq=False)
++class ValueProxy(Proxy):
++    """A Proxy that also carries the concrete value it stands for.
++
++    The tracer can evaluate some calls for real - most importantly draws from
++    a real np.random.Generator, whose only dynamic input is the generator
++    itself. When it does, it returns this proxy so that the call is still
++    recorded as a node in the graph, while the traced program can also use
++    the value: to index a list, to slice, to convert to float, or to branch.
++
++    Keeping the value available matters for two reasons:
++
++    1. Fidelity. pf.control.choice always consumes the real generator, so if
++       the tracer skipped the draws in between, the choice the tracer records
++       would not be the choice the renderer takes.
++    2. Expressiveness. Scene generators that branch on a sampled value cannot
++       be traced at all if the tracer refuses to look at that value.
++
++    Arithmetic on a ValueProxy stays value-aware: if every operand has a
++    known value, the result carries the computed value too.
++    """
++
++    value: Any = None
++
++    def __index__(self) -> int:
++        return int(self.value)
++
++    def __int__(self) -> int:
++        return int(self.value)
++
++    def __float__(self) -> float:
++        return float(self.value)
++
++    def __bool__(self) -> bool:
++        return bool(self.value)
++
++    def __len__(self) -> int:
++        return len(self.value)
++
++    def __iter__(self):
++        return iter(self.value)
++
++
+ @dataclass
+ class AttributeProxy(Proxy):
+     """Special proxy for attribute access that supports peekthrough optimization"""
+ 
+-    def __init__(self, node: Node):
++    source_value: Any = _NOT_EVALUATED
++
++    def __init__(self, node: Node, source_value: Any = _NOT_EVALUATED):
+         super().__init__(node)
+         assert isinstance(node, GetAttributeNode), node
++        self.source_value = source_value
++
++    def __getattr__(self, attr: str) -> "AttributeProxy":
++        node = GetAttributeNode(source=self.node, attribute_name=attr)
++        source_value = self.__dict__.get("source_value", _NOT_EVALUATED)
++        if source_value is not _NOT_EVALUATED:
++            return _known_getattr(node, source_value, attr)
++        return AttributeProxy(node)
+ 
+     def __call__(self, *args, **kwargs) -> Proxy:
+         """
+@@ -174,4 +301,15 @@
+             args=node_args,
+             kwargs=node_kwargs,
+         )
++        if self.source_value is not _NOT_EVALUATED:
++            try:
++                method = getattr(self.source_value, self.node.attribute_name)
++                value = method(
++                    *(a.value if isinstance(a, ValueProxy) else a for a in args),
++                    **{k: v.value if isinstance(v, ValueProxy) else v for k, v in kwargs.items()},
++                )
++            except Exception:
++                value = _NOT_EVALUATED
++            if value is not _NOT_EVALUATED:
++                return _maybe_value_proxy(call_node, value)
+         return Proxy(call_node)
+--- a/procfunc/compute_graph/__init__.py
++++ b/procfunc/compute_graph/__init__.py
+@@ -14,7 +14,7 @@
+     normalize_args_to_kwargs,
+ )
+ from .operators_info import OperatorType
+-from .proxy import AttributeProxy, Proxy
++from .proxy import AttributeProxy, Proxy, ValueProxy
+ from .util import (
+     LiteralConstant,
+     graph_nodes_equal,
+@@ -43,6 +43,7 @@
+     "OperatorType",
+     "AttributeProxy",
+     "Proxy",
++    "ValueProxy",
+     "LiteralConstant",
+     "graph_nodes_equal",
+     "replace_in_graph",
+--- a/procfunc/control/__init__.py
++++ b/procfunc/control/__init__.py
+@@ -38,8 +38,10 @@
+     kwargs: dict,
+ ) -> cg.Proxy:
+     evald = []
++    results = []
+     for func, weight in choice_options:
+         res = func(*args, **kwargs)
++        results.append(res)
+         res = pytree.PyTree(res).map(_unwrap_proxy).obj()
+         evald.append((res, weight))
+ 
+@@ -53,7 +55,10 @@
+         args=(),
+         kwargs=new_kwargs,
+     )
+-    return cg.Proxy(node)
++    # Every option has now been executed, so the chosen branch's result is
++    # known. Hand it back to the traced program so code that consumes the
++    # choice's result (iteration, unpacking, branching on it) keeps working.
++    return cg.ValueProxy(node, results[chosen_idx])
+ 
+ 
+ class ChoiceResultProxy(cg.Proxy):
+@@ -118,6 +123,12 @@
+             args=(),
+             kwargs=new_kwargs,
+         )
++        chosen_value = choice_values[chosen_idx]
++        if not callable(chosen_value):
++            # A non-callable option (a bool, a number, a string) is consumed
++            # directly by the traced program, e.g. `if pf.control.choice(...)`.
++            # The chosen value is known, so return it alongside the node.
++            return cg.ValueProxy(node, chosen_value)
+         return ChoiceResultProxy(node)
+ 
+     return wrapper
+--- a/procfunc/tracer/patch.py
++++ b/procfunc/tracer/patch.py
+@@ -352,6 +352,14 @@
+         return False
+ 
+ 
++_NOT_EVALUATED = object()
++
++
++def _unbox_known(v):
++    """Return the concrete value behind a ValueProxy, else the value itself."""
++    return v.value if isinstance(v, cg.ValueProxy) else v
++
++
+ def _create_leaf_func_proxy_wrapper(
+     target: PatchFunctionTarget,
+     patcher: Patcher,
+@@ -362,6 +370,8 @@
+     def wrapper(*args, **kwargs):
+         logger.debug(f"Executing leaf_wrapper! func={func.__name__}")
+ 
++        evaluated = _NOT_EVALUATED
++
+         # zero proxy args means the user is trying to call this function with real args during tracing
+         # e.g they might do: bias = np.zeros(3)
+         # some functions will allow this and just execute the function and return the result
+@@ -374,7 +384,7 @@
+             if not proxy_leaves:
+                 return func(*args, **kwargs)
+             rng_only = all(isinstance(v, RngProxy) for v in proxy_leaves)
+-            if rng_only and patcher.trace_level < TraceLevel.RANDOM_PARAMS:
++            if rng_only:
+ 
+                 def _unbox_rng(v):
+                     return v.rng if isinstance(v, RngProxy) else v
+@@ -385,8 +395,34 @@
+                 concrete_kwargs = {
+                     k: pytree.PyTree(v).map(_unbox_rng).obj() for k, v in kwargs.items()
+                 }
+-                return func(*concrete_args, **concrete_kwargs)
+-
++                # The only dynamic input is the generator, so we can evaluate
++                # this call for real. Doing so keeps the tracer's RNG stream
++                # identical to the renderer's - pf.control.choice always
++                # consumes the real generator, so skipping the draws in
++                # between would make the tracer record a different branch
++                # than the renderer takes. It also gives the traced program
++                # the sampled value, which scene generators need in order to
++                # index lists or branch.
++                evaluated = func(*concrete_args, **concrete_kwargs)
++                if patcher.trace_level < TraceLevel.RANDOM_PARAMS:
++                    # Coarse trace levels resolve randomness to concrete values
++                    # and do not record the draw at all.
++                    return evaluated
++            elif all(isinstance(v, cg.ValueProxy) for v in proxy_leaves):
++                # Every proxy argument carries a known value, so we can
++                # evaluate this call for real as well - e.g. np.unique() over
++                # an array that was read back from a realized mesh.
++                try:
++                    concrete_args = tuple(
++                        pytree.PyTree(a).map(_unbox_known).obj() for a in args
++                    )
++                    concrete_kwargs = {
++                        k: pytree.PyTree(v).map(_unbox_known).obj()
++                        for k, v in kwargs.items()
++                    }
++                    evaluated = func(*concrete_args, **concrete_kwargs)
++                except Exception:
++                    evaluated = _NOT_EVALUATED
+         if target.normalize:
+             args, kwargs = cg.normalize_args_to_kwargs(func, args, kwargs)
+ 
+@@ -411,6 +447,12 @@
+             )
+             original_proxy.node = mutated_node
+ 
++        if evaluated is not _NOT_EVALUATED:
++            # We evaluated this call for real, but we still want it recorded
++            # as a node. Return a proxy that carries the value so that the
++            # traced program can use it.
++            return cg.ValueProxy(node, evaluated)
++
+         return cg.Proxy(node)
+ 
+     if hasattr(func, "reduce"):
+--- a/procfunc/tracer/proxy.py
++++ b/procfunc/tracer/proxy.py
+@@ -44,6 +44,9 @@
+         Returns a mock node which can only be unpacked into its constitutent mock rngs
+         """
+ 
++        if isinstance(n_children, cg.ValueProxy):
++            # the count was sampled during tracing, so the tracer knows it
++            n_children = int(n_children.value)
+         assert isinstance(n_children, int)
+ 
+         spawn_node = cg.MethodCallNode(
+@@ -75,6 +78,15 @@
+                 f"__getattr__ {name} is invalid because {type(self.rng)} has no attribute {name}"
+             )
+ 
++        attr = getattr(self.rng, name)
++        if callable(attr):
++            # A generator method (e.g. rng.choice(...)) has one dynamic input -
++            # the generator itself - so it can be evaluated for real. Giving
++            # the attribute the real generator as its source value keeps the
++            # tracer's RNG stream identical to the renderer's, and hands the
++            # traced program the sampled value.
++            node = cg.GetAttributeNode(source=self.node, attribute_name=name)
++            return cg.AttributeProxy(node, self.rng)
+         return super().__getattr__(name)
+ 
+ 
