@@ -324,7 +324,8 @@ extern "C" {
         double *sdf
     ) {
         using namespace pretest;
-        cnt = 0;
+        // flags computed in parallel; collection is serial so the frontier
+        // order (and with it the whole downstream vertex order) is canonical
         #pragma omp parallel for
         for (int q = 0; q < 6; q++)
         for (int i = 0; i < L; i++)
@@ -341,9 +342,16 @@ extern "C" {
                 zero |= sdf_c == 0;
             }
             int t0 = L * L * R, t1 = L * R, t2 = R;
-            if ((flag[q * t0 + i * t1 + j * t2 + k] = has_iso_surface(positive, negative, zero))) {
-                #pragma omp critical
-                {
+            flag[q * t0 + i * t1 + j * t2 + k] = has_iso_surface(positive, negative, zero);
+        }
+        cnt = 0;
+        {
+            int t0 = L * L * R, t1 = L * R, t2 = R;
+            for (int q = 0; q < 6; q++)
+            for (int i = 0; i < L; i++)
+            for (int j = 0; j < L; j++)
+            for (int k = 0; k < R; k++)
+                if (flag[q * t0 + i * t1 + j * t2 + k]) {
                     int mycnt = cnt++;
                     if (mycnt >= newfound_cap) {
                         newfound_cap *= 2;
@@ -354,7 +362,6 @@ extern "C" {
                     newfound[4 * mycnt + 2] = j;
                     newfound[4 * mycnt + 3] = k;
                 }
-            }
         }
         if (cnt == 0) {
             pretest::cleanup();
@@ -501,26 +508,23 @@ extern "C" {
     int get_cnt() {
         using namespace pretest;
         int t0 = L * L * R, t1 = L * R, t2 = R;
+        // serial: canonical frontier order (was omp parallel + critical)
         cnt = 0;
-        #pragma omp parallel for
         for (int q = 0; q < 6; q++)
         for (int i = 0; i < L; i++)
         for (int j = 0; j < L; j++)
         for (int k = 0; k < R; k++)
             if (flag[q * t0 + i * t1 + j * t2 + k] == 2) {
                 flag[q * t0 + i * t1 + j * t2 + k] = 1;
-                #pragma omp critical
-                {
-                    int mycnt = cnt++;
-                    if (mycnt >= newfound_cap) {
-                        newfound_cap *= 2;
-                        HR(newfound, newfound_cap * 4);
-                    }
-                    newfound[4 * mycnt] = q;
-                    newfound[4 * mycnt + 1] = i;
-                    newfound[4 * mycnt + 2] = j;
-                    newfound[4 * mycnt + 3] = k;
+                int mycnt = cnt++;
+                if (mycnt >= newfound_cap) {
+                    newfound_cap *= 2;
+                    HR(newfound, newfound_cap * 4);
                 }
+                newfound[4 * mycnt] = q;
+                newfound[4 * mycnt + 1] = i;
+                newfound[4 * mycnt + 2] = j;
+                newfound[4 * mycnt + 3] = k;
             }
         if (cnt == 0) {
             pretest::cleanup();
@@ -542,22 +546,19 @@ extern "C" {
             }
         }
         cnt = 0;
-        #pragma omp parallel for
+        // serial: canonical frontier order (was omp parallel + critical)
         for (int i = 0; i < H; i++)
         for (int j = 0; j < W; j++)
         for (int k = 0; k < R; k++)
             if (flag[i * t1 + j * t2 + k]) {
-                #pragma omp critical
-                {
-                    int mycnt = cnt++;
-                    if (mycnt >= newfound_cap) {
-                        newfound_cap *= 2;
-                        HR(newfound, newfound_cap * 3);
-                    }
-                    newfound[3 * mycnt] = i;
-                    newfound[3 * mycnt + 1] = j;
-                    newfound[3 * mycnt + 2] = k;
+                int mycnt = cnt++;
+                if (mycnt >= newfound_cap) {
+                    newfound_cap *= 2;
+                    HR(newfound, newfound_cap * 3);
                 }
+                newfound[3 * mycnt] = i;
+                newfound[3 * mycnt + 1] = j;
+                newfound[3 * mycnt + 2] = k;
             }
         return cnt;
     }
@@ -658,24 +659,21 @@ extern "C" {
     int finefront_get_cnt() {
         using namespace finefront;
         int t1 = W * R, t2 = R;
+        // serial: canonical frontier order (was omp parallel + critical)
         cnt = 0;
-        #pragma omp parallel for
         for (int i = 0; i < H; i++)
         for (int j = 0; j < W; j++)
         for (int k = 0; k < R; k++)
             if (flag[i * t1 + j * t2 + k] == 2) {
                 flag[i * t1 + j * t2 + k] = 1;
-                #pragma omp critical
-                {
-                    int mycnt = cnt++;
-                    if (mycnt >= newfound_cap) {
-                        newfound_cap *= 2;
-                        HR(newfound, newfound_cap * 3);
-                    }
-                    newfound[3 * mycnt] = i;
-                    newfound[3 * mycnt + 1] = j;
-                    newfound[3 * mycnt + 2] = k;
+                int mycnt = cnt++;
+                if (mycnt >= newfound_cap) {
+                    newfound_cap *= 2;
+                    HR(newfound, newfound_cap * 3);
                 }
+                newfound[3 * mycnt] = i;
+                newfound[3 * mycnt + 1] = j;
+                newfound[3 * mycnt + 2] = k;
             }
         return cnt;
     }

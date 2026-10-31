@@ -32,6 +32,28 @@ bool has_iso_surface(bool positive, bool negative, bool zero) {
     return (positive && (negative || zero));
 }
 
+// Sort an array of n (a,b,c) triples lexicographically. Used to give the
+// frontier lists a canonical order independent of which thread appended
+// first, so meshes are reproducible run to run.
+void sort_triples(int *a, int n) {
+    if (n <= 1) return;
+    int *idx;
+    HM(idx, n);
+    for (int i = 0; i < n; i++) idx[i] = i;
+    sort(idx, idx + n, [a](int x, int y) {
+        for (int j = 0; j < 3; j++)
+            if (a[3 * x + j] != a[3 * y + j]) return a[3 * x + j] < a[3 * y + j];
+        return false;
+    });
+    int *tmp;
+    HM(tmp, 3 * n);
+    for (int i = 0; i < 3 * n; i++) tmp[i] = a[i];
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < 3; j++) a[3 * i + j] = tmp[3 * idx[i] + j];
+    safefree(tmp);
+    safefree(idx);
+}
+
 unsigned int myhash(int k)
 {
     k ^= k >> 16;

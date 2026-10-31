@@ -256,6 +256,10 @@ namespace fine_pretest {
                 #pragma omp critical
                 update(u, v, w, 3);
             }
+            // canonical frontier order: entries were appended by whichever
+            // thread got there first, and the batch composition feeds both
+            // the sdf queries and the vertex append order
+            sort_triples(newfound, newfound_cnt);
             return newfound_cnt;
         }
         newfound_cnt = 0;
@@ -269,6 +273,7 @@ namespace fine_pretest {
                         coords_HWL[j * 3 + 2] = 3;
                     }
         }
+        sort_triples(newfound, newfound_cnt);
         return newfound_cnt;
     }
 }
@@ -352,7 +357,8 @@ extern "C" {
         double *sdf
     ) {
         using namespace coarse_pretest;
-        cnt = 0;
+        // flags computed in parallel; collection is serial so the frontier
+        // order (and with it the whole downstream vertex order) is canonical
         #pragma omp parallel for
         for (int i = 0; i < H; i++)
         for (int j = 0; j < W; j++)
@@ -368,9 +374,15 @@ extern "C" {
                 zero |= sdf_c == 0;
             }
             int t1 = W * R, t2 = R;
-            if ((flag[i * t1 + j * t2 + k] = has_iso_surface(positive, negative, zero))) {
-                #pragma omp critical
-                {
+            flag[i * t1 + j * t2 + k] = has_iso_surface(positive, negative, zero);
+        }
+        cnt = 0;
+        {
+            int t1 = W * R, t2 = R;
+            for (int i = 0; i < H; i++)
+            for (int j = 0; j < W; j++)
+            for (int k = 0; k < R; k++)
+                if (flag[i * t1 + j * t2 + k]) {
                     int mycnt = cnt++;
                     if (mycnt >= newfound_cap) {
                         newfound_cap *= 2;
@@ -380,7 +392,6 @@ extern "C" {
                     newfound[3 * mycnt + 1] = j;
                     newfound[3 * mycnt + 2] = k;
                 }
-            }
         }
         return cnt;
     }
@@ -498,24 +509,21 @@ extern "C" {
     int get_cnt() {
         using namespace coarse_pretest;
         int t1 = W * R, t2 = R;
+        // serial: canonical frontier order (was omp parallel + critical)
         cnt = 0;
-        #pragma omp parallel for
         for (int i = 0; i < H; i++)
         for (int j = 0; j < W; j++)
         for (int k = 0; k < R; k++)
             if (flag[i * t1 + j * t2 + k] == 2) {
                 flag[i * t1 + j * t2 + k] = 1;
-                #pragma omp critical
-                {
-                    int mycnt = cnt++;
-                    if (mycnt >= newfound_cap) {
-                        newfound_cap *= 2;
-                        HR(newfound, newfound_cap * 3);
-                    }
-                    newfound[3 * mycnt] = i;
-                    newfound[3 * mycnt + 1] = j;
-                    newfound[3 * mycnt + 2] = k;
+                int mycnt = cnt++;
+                if (mycnt >= newfound_cap) {
+                    newfound_cap *= 2;
+                    HR(newfound, newfound_cap * 3);
                 }
+                newfound[3 * mycnt] = i;
+                newfound[3 * mycnt + 1] = j;
+                newfound[3 * mycnt + 2] = k;
             }
         return cnt;
     }

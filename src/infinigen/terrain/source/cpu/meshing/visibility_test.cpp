@@ -225,14 +225,28 @@ void compute_face_order(
     int M1, int M2,
     bool skip_backface
 ) {
+    // Faces used to be prepended to their depth bucket under `#pragma omp
+    // critical`, so the order of same-depth faces depended on thread
+    // scheduling. The visibility rasterizer below is order-sensitive at
+    // depth ties, which changed which fine blocks got meshed and made the
+    // fine terrain vary run to run. Compute each face's bucket/pixel in
+    // parallel (no shared writes), then fill the buckets serially in face
+    // index order so the layout is deterministic.
+    int total = M2 - M1;
+    int *orders, *hs, *ws;
+    HM(orders, total); HM(hs, total); HM(ws, total);
     #pragma omp parallel for
     for (int idx = M1; idx < M2; idx++) {
+        int k = idx - M1;
         const double eps = 1e-3;
         int p[3]{mesh::faces[idx * 3], mesh::faces[idx * 3 + 1], mesh::faces[idx * 3 + 2]};
         double x1 = mesh::vertices[p[1] * 3] - mesh::vertices[p[0] * 3], y1 = mesh::vertices[p[1] * 3 + 1] - mesh::vertices[p[0] * 3 + 1];
         double x2 = mesh::vertices[p[2] * 3] - mesh::vertices[p[0] * 3], y2 = mesh::vertices[p[2] * 3 + 1] - mesh::vertices[p[0] * 3 + 1];
         if (x1 * y2 - x2 * y1 > 0) {
-            if (skip_backface) continue;
+            if (skip_backface) {
+                orders[k] = -1;
+                continue;
+            }
             else {
                 face_map::backface[idx] = 1;
             }
@@ -251,10 +265,15 @@ void compute_face_order(
             total_theta += theta / 3;
             total_phi += phi / 3;
         }
-        int int_theta = fmin(int(floor(total_theta)), face_map::H - 1);
-        int int_phi = fmin(int(floor(total_phi)), face_map::W - 1);
-        depth_table::add(total_order, idx, int_theta, int_phi);
+        orders[k] = total_order;
+        hs[k] = fmin(int(floor(total_theta)), face_map::H - 1);
+        ws[k] = fmin(int(floor(total_phi)), face_map::W - 1);
     }
+    for (int k = 0; k < total; k++) {
+        if (orders[k] < 0) continue;
+        depth_table::add(orders[k], k + M1, hs[k], ws[k]);
+    }
+    safefree(orders); safefree(hs); safefree(ws);
     SETN(face_map::new_head, face_map::H * face_map::W);
     for (int i = depth_table::R * 6; i >= 0; i--) {
         for (int j = depth_table::head[i]; j != -1; j = depth_table::nxt[j]) {
@@ -534,23 +553,22 @@ namespace extend {
     void adj_table_fillup(
         int *faces
     ) {
-        #pragma omp parallel for
+        // serial: the previous parallel fillup allocated a slot under one
+        // critical section and linked it under a second, so the chain order
+        // (and, for duplicated directed edges, which neighbor a face
+        // resolves to) depended on thread scheduling
         for (int idx = 0; idx < M; idx++) {
             for (int i = 0; i < 3; i++) {
                 int u = faces[idx * 3 + i], v = faces[idx * 3 + (i + 1) % 3];
                 int hash_value = myhash(myhash(u) + v) % hash_cap;
                 int mycnt;
-                #pragma omp critical
                 mycnt = cnt++;
                 uvf[mycnt * 3] = u;
                 uvf[mycnt * 3 + 1] = v;
                 uvf[mycnt * 3 + 2] = idx;
                 int old_heads;
-                #pragma omp critical
-                {
-                    old_heads = head[hash_value];
-                    head[hash_value] = mycnt;
-                }
+                old_heads = head[hash_value];
+                head[hash_value] = mycnt;
                 nxt[mycnt] = old_heads;
             }
         }
