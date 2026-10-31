@@ -1,0 +1,19 @@
+diff --git a/source/blender/blenkernel/intern/writeffmpeg.cc b/source/blender/blenkernel/intern/writeffmpeg.cc
+index 00f9504..9d0fc51 100644
+--- a/source/blender/blenkernel/intern/writeffmpeg.cc
++++ b/source/blender/blenkernel/intern/writeffmpeg.cc
+@@ -43,6 +43,14 @@
+  * like M_SQRT1_2 leading to warnings with MSVC */
+ extern "C" {
+ #  include <libavcodec/avcodec.h>
++
++/* Jetson Thor / Ubuntu 24.04 (FFmpeg 6.1) compatibility: AV_INPUT_BUFFER_MIN_SIZE
++ * was removed from libavcodec after FFmpeg 5. Historic value (16384); used only
++ * as a sizing hint for vorbis audio input buffering. */
++#  ifndef AV_INPUT_BUFFER_MIN_SIZE
++#    define AV_INPUT_BUFFER_MIN_SIZE 16384
++#  endif
++
+ #  include <libavformat/avformat.h>
+ #  include <libavutil/buffer.h>
+ #  include <libavutil/channel_layout.h>

@@ -1,0 +1,23 @@
+diff --git a/source/blender/imbuf/intern/indexer.cc b/source/blender/imbuf/intern/indexer.cc
+index e0c2edf..5d21da4 100644
+--- a/source/blender/imbuf/intern/indexer.cc
++++ b/source/blender/imbuf/intern/indexer.cc
+@@ -1060,9 +1060,18 @@ static int index_rebuild_ffmpeg(FFmpegIndexBuilderContext *context,
+           context->last_seek_pos_pts = context->seek_pos_pts;
+           context->last_seek_pos_dts = context->seek_pos_dts;
+ 
++#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(59, 0, 100)
++          /* FFmpeg 7+ removed AVFrame::pkt_pos and AVFrame::pkt_dts. Use the
++           * keyframe packet's own position/timestamps; next_packet is the
++           * packet that was just sent to the decoder for this keyframe. */
++          context->seek_pos = next_packet->pos;
++          context->seek_pos_pts = in_frame->pts;
++          context->seek_pos_dts = next_packet->dts;
++#else
+           context->seek_pos = in_frame->pkt_pos;
+           context->seek_pos_pts = in_frame->pts;
+           context->seek_pos_dts = in_frame->pkt_dts;
++#endif
+         }
+ 
+         index_rebuild_ffmpeg_proc_decoded_frame(context, next_packet, in_frame);

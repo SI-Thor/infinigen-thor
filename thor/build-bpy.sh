@@ -181,6 +181,7 @@ cmake -S "$BLENDER_SRC" -B "$BUILD_DIR" -G Ninja \
   -DOPENIMAGEIO_ROOT_DIR="$OIIO_PREFIX" \
   -UOPENIMAGEIO_INCLUDE_DIR -UOPENIMAGEIO_LIBRARY -UOPENIMAGEIO_LIBRARIES \
   -UOPENIMAGEIO_UTIL_LIBRARY \
+  -DCMAKE_CXX_STANDARD_LIBRARIES="-ltiff" \
   -DWITH_CYCLES_CUDA_BINARIES=ON \
   -DCYCLES_CUDA_BINARIES_ARCH=sm_"$CUDA_ARCH" \
   -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
@@ -197,11 +198,12 @@ log "configure done"
 
 # ---------------------------------------------------------------------------
 stage 5 "build (ninja -j$JOBS) - expect 30-90 min"
-cmake --build "$BUILD_DIR" -j "$JOBS" > "$LOG_DIR/blender-build.log" 2>&1
+cmake --build "$BUILD_DIR" -j "$JOBS" --target install > "$LOG_DIR/blender-build.log" 2>&1
 log "build finished"
 
 # ---------------------------------------------------------------------------
 stage 6 "bpy wheel"
+"$PY" -m pip -q install wheel
 cd "$BLENDER_SRC/build_files/utils"
 "$PY" make_bpy_wheel.py "$BUILD_DIR/bin" --output-dir="$WHEEL_DIR" \
   > "$LOG_DIR/wheel.log" 2>&1
@@ -218,9 +220,17 @@ import bpy, time
 print("bpy", bpy.app.version_string, "| build:", bpy.app.build_platform.decode())
 for dev in bpy.context.preferences.addons["cycles"].preferences.devices:
     print("cycles device:", dev.name, dev.type)
-for device in ("CPU", "CUDA"):
+for device in ("CPU", "GPU"):
     scene = bpy.data.scenes["Scene"]
+    scene.cycles.use_denoising = False  # OIDN is not available in this build
     scene.render.engine = "CYCLES"
+    if device == "GPU":
+        # Prefer CUDA on the Thor (OptiX does not exist on aarch64).
+        prefs = bpy.context.preferences.addons["cycles"].preferences
+        prefs.compute_device_type = "CUDA"
+        prefs.get_devices()
+        for d in prefs.devices:
+            d.use = d.type == "CUDA"
     scene.cycles.device = device
     scene.render.resolution_x = scene.render.resolution_y = 128
     scene.cycles.samples = 32

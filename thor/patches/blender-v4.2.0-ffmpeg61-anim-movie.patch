@@ -1,0 +1,41 @@
+diff --git a/source/blender/imbuf/intern/anim_movie.cc b/source/blender/imbuf/intern/anim_movie.cc
+index 3d51969..3881f32 100644
+--- a/source/blender/imbuf/intern/anim_movie.cc
++++ b/source/blender/imbuf/intern/anim_movie.cc
+@@ -653,7 +653,13 @@ static void ffmpeg_decode_store_frame_pts(ImBufAnim *anim)
+ {
+   anim->cur_pts = av_get_pts_from_frame(anim->pFrame);
+ 
++#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(58, 0, 100)
++  /* AVFrame::key_frame was removed in newer FFmpeg (Ubuntu 24.04 ships
++   * libavutil 60). Use the replacement flag. */
++  if (anim->pFrame->flags & AV_FRAME_FLAG_KEY) {
++#else
+   if (anim->pFrame->key_frame) {
++#endif
+     anim->cur_key_frame_pts = anim->cur_pts;
+   }
+ 
+@@ -1032,6 +1038,14 @@ static int ffmpeg_seek_to_key_frame(ImBufAnim *anim,
+ 
+     AVFormatContext *format_ctx = anim->pFormatCtx;
+ 
++#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(60, 30, 100)
++    /* AVInputFormat became opaque in newer FFmpeg (Ubuntu 24.04 / Jetson
++     * Thor builds against libavformat 61); the read_seek / read_seek2
++     * members are gone. Always use av_seek_frame and let FFmpeg perform its
++     * internal fallback when the demuxer lacks a custom seek. */
++    ret = av_seek_frame(anim->pFormatCtx, anim->videoStream, seek_pos, AVSEEK_FLAG_BACKWARD);
++    (void)format_ctx;
++#else
+     if (format_ctx->iformat->read_seek2 || format_ctx->iformat->read_seek) {
+       ret = av_seek_frame(anim->pFormatCtx, anim->videoStream, seek_pos, AVSEEK_FLAG_BACKWARD);
+     }
+@@ -1042,6 +1056,7 @@ static int ffmpeg_seek_to_key_frame(ImBufAnim *anim,
+              "Adjusted final seek seek_pos = %" PRId64 "\n",
+              seek_pos);
+     }
++#endif
+ 
+     if (ret <= 0 && !ffmpeg_seek_buffers_need_flushing(anim, position, seek_pos)) {
+       return 0;
