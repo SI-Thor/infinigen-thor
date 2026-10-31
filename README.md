@@ -1,3 +1,31 @@
+# Infinigen on the Jetson Thor (SI-Thor/infinigen-thor)
+
+> **This fork** ports [Princeton's Infinigen](https://github.com/princeton-vl/infinigen) (BSD-3) to the **NVIDIA Jetson AGX Thor** (aarch64, 14 Neoverse-V3AE cores, 122 GB unified memory, Blackwell GPU sm_110, CUDA 13.2) as the world engine of [**builder-ide**](https://github.com/SI-Thor/builder-ide): agent builders that work on procedurally generated worlds overnight. Upstream's README follows below, unchanged.
+
+## Status: phase 1 done — Infinigen runs natively on the Thor (branch \, 2026-10-31)
+
+| What | Result |
+|---|---|
+| Blender 4.2 as the \ Python module for Linux aarch64 | **built from source** (no prebuilt exists): \, ~5 patches, ~70 min |
+| Infinigen install against the local wheel | \ |
+| Hello Room (Infinigen Indoors) | **works**: coarse 534 s; full 8192-spp render 21.8 min on the GPU |
+| Hello World (Infinigen Nature, desert) | **works**: ≈5.5 min end to end (docs: ~10 min on a desktop) |
+| Cycles, same frame, 256 spp, 1280×720 | **GPU 63.4 s vs CPU (14 cores) 450.1 s: 7.1×** |
+| Terrain CUDA kernels | build for sm_110 and load; not yet exercised in a scene |
+
+Full numbers, box state and every wall hit: [\](thor/SPIKE.md). Reproduce: \, \, \, \.
+
+## Known gaps (phase 2)
+- **No RT cores** in the Thor (AGX T5000), so Cycles uses CUDA, not OptiX — a hardware fact, not a packaging gap.
+- **No denoiser yet**: Blender's OIDN build recipe needs a Linux-aarch64 CPU-only path; Infinigen **2.0** raises without a denoiser (1.x renders noisy).
+- This branch installs Infinigen **1.x** (\); upstream main is **2.0** (\), whose terrain is a v1 feature. The engine choice (1.x, 2.0 + procfunc, or 2.0 with Thor-native stages) is being studied in builder-ide.
+- Generation is mostly single-threaded Python (≈2 of 14 cores busy): the Thor-native wins are warm scenes, concurrent renders in unified memory, GPU terrain (our Warp port of \ is bit-identical and 44-56× the CPU path: builder-ide \).
+
+## Licence
+BSD-3-Clause, Copyright (c) Princeton University (see \), kept unchanged. Our additions under \ follow the same licence.
+
+---
+
 
 <div align="center">
 <img src="docs/images/infinigen.png" width="300"></img>
