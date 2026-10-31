@@ -41,7 +41,7 @@ wait 2>/dev/null
 ELAPSED=$((END - START))
 RSS_KB=$(awk -F': ' '/Maximum resident set size/ {print $2}' "$LOGS/$NAME.time")
 CPU=$(awk -F': ' '/Percent of CPU/ {print $2}' "$LOGS/$NAME.time")
-PEAK_RAM_MB=$(grep -o "RAM [0-9]*/" "$LOGS/$NAME.stats" | tr -d 'RAM/' | awk '{if ($1>m) m=$1} END {print m/1024}')
+PEAK_RAM_MB=$(grep -o "RAM [0-9]*/" "$LOGS/$NAME.stats" | tr -dc "0-9\n/" | cut -d/ -f1 | sort -n | tail -1)
 MAX_GPU_UTIL=$(awk -F', ' '{gsub("%","",$1); if ($1+0>m) m=$1+0} END {print m}' "$LOGS/$NAME.gpu")
 MAX_GPU_MEM=$(awk -F', ' '{gsub(" MiB","",$2); if ($2+0>m) m=$2+0} END {print m}' "$LOGS/$NAME.gpu")
 

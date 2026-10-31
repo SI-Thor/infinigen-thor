@@ -100,7 +100,8 @@ extern "C" {
         using namespace pretest;
         int x_N = specs::N_coarse[0], y_N = specs::N_coarse[1], z_N = specs::N_coarse[2];
         int t0 = y_N * z_N, t1 = z_N;
-        cnt = 0;
+        // flags computed in parallel; collection is serial so the frontier
+        // order (and with it the whole downstream vertex order) is canonical
         #pragma omp parallel for
         for (int i = 0; i < x_N; i++)
         for (int j = 0; j < y_N; j++)
@@ -114,9 +115,13 @@ extern "C" {
                 negative |= sdf_c < 0;
                 zero |= sdf_c == 0;
             }
-            if ((flag[i * t0 + j * t1 + k] = has_iso_surface(positive, negative, zero)))
-            #pragma omp critical
-            {
+            flag[i * t0 + j * t1 + k] = has_iso_surface(positive, negative, zero);
+        }
+        cnt = 0;
+        for (int i = 0; i < x_N; i++)
+        for (int j = 0; j < y_N; j++)
+        for (int k = 0; k < z_N; k++)
+            if (flag[i * t0 + j * t1 + k]) {
                 int mycnt = cnt++;
                 if (mycnt >= newfound_cap) {
                     newfound_cap *= 2;
@@ -126,7 +131,6 @@ extern "C" {
                 newfound[3 * mycnt + 1] = j;
                 newfound[3 * mycnt + 2] = k;
             }
-        }
         return cnt;
     }
 
@@ -239,24 +243,21 @@ extern "C" {
     int get_cnt() {
         using namespace pretest;
         int x_N = specs::N_coarse[0], y_N = specs::N_coarse[1], z_N = specs::N_coarse[2];
+        // serial: canonical frontier order (was omp parallel + critical)
         cnt = 0;
-        #pragma omp parallel for
         for (int i = 0; i < x_N; i++)
         for (int j = 0; j < y_N; j++)
         for (int k = 0; k < z_N; k++)
             if (flag[i * (y_N) * (z_N) + j * (z_N) + k] == 2) {
                 flag[i * (y_N) * (z_N) + j * (z_N) + k] = 1;
-                #pragma omp critical
-                {
-                    int mycnt = cnt++;
-                    if (mycnt >= newfound_cap) {
-                        newfound_cap *= 2;
-                        HR(newfound, newfound_cap * 3);
-                    }
-                    newfound[3 * mycnt] = i;
-                    newfound[3 * mycnt + 1] = j;
-                    newfound[3 * mycnt + 2] = k;
+                int mycnt = cnt++;
+                if (mycnt >= newfound_cap) {
+                    newfound_cap *= 2;
+                    HR(newfound, newfound_cap * 3);
                 }
+                newfound[3 * mycnt] = i;
+                newfound[3 * mycnt + 1] = j;
+                newfound[3 * mycnt + 2] = k;
             }
         return cnt;
     }

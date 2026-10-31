@@ -17,7 +17,9 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXT_LINK="$REPO/.ext-thor"
 PY="$REPO/.toolchain/python-3.11/bin/python3.11"
-VENV="$REPO/.venv"
+# VENV is overridable so phase-2 work can target .venv-p2 while the seed
+# sweep keeps running against the original .venv (do not touch that one).
+VENV="${VENV:-$REPO/.venv}"
 WHEEL_DIR="$REPO/.toolchain/wheels"
 
 stage() { printf '\n=== [%s] %s\n' "$(date +%H:%M:%S)" "$1"; }
@@ -34,7 +36,7 @@ fi
 "$VENV/bin/python" --version
 
 stage "install local bpy wheel first (satisfies the bpy==4.2.0 pin)"
-WHEEL="$(ls -1 "$WHEEL_DIR"/bpy-4.2.0-*.whl 2>/dev/null | head -n1 || true)"
+WHEEL="$(ls -1t "$WHEEL_DIR"/bpy-4.2.0-*.whl 2>/dev/null | head -n1 || true)"
 if [[ -z "$WHEEL" ]]; then
   echo "no bpy wheel in $WHEEL_DIR - run thor/build-bpy.sh first" >&2
   exit 1
@@ -48,10 +50,16 @@ git -C "$REPO" submodule update --init --recursive \
   src/infinigen/datagen/customgt/dependencies/glm
 
 stage "pip install -e .[infinigen1,terrain] (builds terrain + marching_cubes)"
-INFINIGEN_MINIMAL_INSTALL=False INFINIGEN_INSTALL_TERRAIN=True \
+# INFINIGEN_INSTALL_TERRAIN is overridable: setup.py's `make terrain` step is
+# NOT idempotent (it rewrites every terrain .so in the shared source tree),
+# so a second venv created while renders are running against the first one
+# (e.g. .venv-p2 during the phase-2 seed sweep on .venv) must skip it and
+# reuse the .so already built in-tree; a half-written .so would dlopen-fail
+# a running job. The [terrain] extra still installs all python deps.
+INFINIGEN_MINIMAL_INSTALL=False INFINIGEN_INSTALL_TERRAIN="${INFINIGEN_INSTALL_TERRAIN:-True}" \
   "$VENV/bin/pip" install -e "$REPO[infinigen1,terrain]" \
-  > "$EXT_LINK/logs/infinigen-install.log" 2>&1 || {
-    echo "install failed, tail of log:"; tail -30 "$EXT_LINK/logs/infinigen-install.log"; exit 1; }
+  > "$EXT_LINK/logs/infinigen-install-${VENV##*/}.log" 2>&1 || {
+    echo "install failed, tail of log:"; tail -30 "$EXT_LINK/logs/infinigen-install-${VENV##*/}.log"; exit 1; }
 
 stage "smoke: import infinigen terrain + bpy in the same interpreter"
 "$VENV/bin/python" - <<'EOF'

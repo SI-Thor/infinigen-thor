@@ -8,7 +8,8 @@
 | **`experiments/`** | Four scripts, **numpy only** — no torch, no GPU, no dataset. A claim that needs a GPU is not yet a claim. Each carries a control that can fail, and each of them did fail during development. |
 | **`THOR-EXPLOITS.md`** | Nine doors that are already unlocked, ordered by time saved, each with its fix. |
 | `THOR-ARCHITECTURE.md` | The background: what the port actually is, the Thor's real hardware envelope, the compute map, six blockers ranked by leverage. |
-| `probe-thor.sh` | Runs on the Thor. Measures GPU visibility, `libnvoptix.so`, the storage substrate, nvcc's default arch, unified memory, the wheel's device types and denoisers, terrain SASS arch. Exits non-zero on a missing capability. |
+| `probe-thor.sh` | The team's pipeline **gate** (from `thor-spike`): PASS/FAIL per capability over the venv — cuda, umem, nvcc-arch, denoiser, cycles, sm_110 SASS. Exits non-zero on a missing capability. |
+| `probe-thor-receipts.sh` | The **measurement** probe: a written receipt per probe, covering the five things the gate does not — `libnvoptix.so` in the driver, `nvidia-smi soc -q`, `NVCC_APPEND_FLAGS`, the storage substrate (fuseblk/USB), and host-malloc device-addressability. |
 | `thor-env.sh` | `source` it: `NVCC_APPEND_FLAGS=-arch=sm_110` and the NVMe toolchain paths, in one place. |
 | `patch-infinigen2-denoise-fallback.patch` | 3-line fix to Infinigen 2.0: warn and continue when no denoiser exists, instead of `raise RuntimeError`. **Unblocks the 2.0 pipeline tonight, with no bpy rebuild.** |
 | `build-bpy.sh` | Updated `thor/build-bpy.sh`: corrected OptiX rationale, **denoiser enabled**, and a smoke test that *asserts* a denoiser exists. |
@@ -47,7 +48,7 @@
    `infinigen2/util/hardware_info.py` calls `nvidia-smi --query-gpu=name,memory.total`
    and keeps the result only if the exit code is 0. On Tegra, `nvidia-smi` is a
    different implementation and GPU memory is shared with the CPU — and your own
-   research already says so. `probe-thor.sh` tests this exact call.
+   research already says so. `probe-thor-receipts.sh` tests this exact call.
 5. **The build tree is still on the drive that just ate a 30-minute run.**
    `361fc7cb` moved the runtime toolchain to NVMe but left the ninja build tree and
    the logs on the wedging fuseblk/USB shelf. Two lines to fix.

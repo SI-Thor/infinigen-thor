@@ -1,0 +1,1131 @@
+diff --git a/src/infinigen2/manifest.json b/src/infinigen2/manifest.json
+index 584589d..b1ec2bb 100644
+--- a/src/infinigen2/manifest.json
++++ b/src/infinigen2/manifest.json
+@@ -203,7 +203,9 @@
+   {
+     "category": "Material",
+     "name": "infinigen2.shaders.composites.scratches_overlay.wood_scratched_rand",
+-    "old_names": ["scratched_wood_rand"],
++    "old_names": [
++      "scratched_wood_rand"
++    ],
+     "presets": [
+       "wood_scratched_deep_dirty_preset",
+       "wood_scratched_light_varnish_preset",
+@@ -213,7 +215,9 @@
+   {
+     "category": "Material",
+     "name": "infinigen2.shaders.composites.scratches_overlay.metal_scratched_rand",
+-    "old_names": ["scratched_metal_rand"],
++    "old_names": [
++      "scratched_metal_rand"
++    ],
+     "presets": [
+       "metal_scratched_brushed_preset",
+       "metal_scratched_dense_preset"
+@@ -285,7 +289,9 @@
+   {
+     "category": "Material",
+     "name": "infinigen2.shaders.base_materials.cracked_ground.ground_cracked_rand",
+-    "old_names": ["cracked_ground_rand"],
++    "old_names": [
++      "cracked_ground_rand"
++    ],
+     "integration_test_string": "ground_cracked_rand material_sphere render_cycles"
+   },
+   {
+@@ -346,7 +352,9 @@
+   {
+     "category": "MaterialOverlay",
+     "name": "infinigen2.shaders.composites.paint_overlay.paint_cracked_overlay_rand",
+-    "old_names": ["cracked_paint_overlay_rand"]
++    "old_names": [
++      "cracked_paint_overlay_rand"
++    ]
+   },
+   {
+     "category": "Material",
+@@ -522,7 +530,9 @@
+   {
+     "category": "Material",
+     "name": "infinigen2.shaders.functionality_lists.wood_painted_rand",
+-    "old_names": ["painted_wood_rand"],
++    "old_names": [
++      "painted_wood_rand"
++    ],
+     "integration_test_string": "wood_painted_rand material_plane_uv render_cycles"
+   },
+   {
+@@ -573,17 +583,23 @@
+   {
+     "category": "Environment",
+     "name": "infinigen2.lighting.sky_lighting.sky_nishita_rand",
+-    "old_names": ["nishita_sky_rand"]
++    "old_names": [
++      "nishita_sky_rand"
++    ]
+   },
+   {
+     "category": "Environment",
+     "name": "infinigen2.lighting.sky_lighting.sky_hosek_wilkie_rand",
+-    "old_names": ["hosek_wilkie_sky_rand"]
++    "old_names": [
++      "hosek_wilkie_sky_rand"
++    ]
+   },
+   {
+     "category": "Environment",
+     "name": "infinigen2.lighting.sky_lighting.sky_hosek_wilkie_with_sun_lamp_rand",
+-    "old_names": ["hosek_wilkie_sky_with_sun_lamp_rand"]
++    "old_names": [
++      "hosek_wilkie_sky_with_sun_lamp_rand"
++    ]
+   },
+   {
+     "category": "Environment",
+@@ -592,7 +608,9 @@
+   {
+     "category": "Environment",
+     "name": "infinigen2.lighting.point_lighting.lights_floating_colored_rand",
+-    "old_names": ["floating_colored_lights_rand"]
++    "old_names": [
++      "floating_colored_lights_rand"
++    ]
+   },
+   {
+     "category": "Scene",
+@@ -655,37 +673,49 @@
+   {
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.dining_table_setup.table_dining_with_chairs_rand",
+-    "old_names": ["dining_setup_rand"],
++    "old_names": [
++      "dining_setup_rand"
++    ],
+     "integration_test_string": "table_dining_with_chairs_rand object_demo render_cycles"
+   },
+   {
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.cocktail_table_setup.table_cocktail_setup_rand",
+-    "old_names": ["cocktail_table_setup_rand"],
++    "old_names": [
++      "cocktail_table_setup_rand"
++    ],
+     "integration_test_string": "table_cocktail_setup_rand object_demo render_cycles"
+   },
+   {
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.dining_table_setup.table_dining_setup_rand",
+-    "old_names": ["dining_table_setup_rand"],
++    "old_names": [
++      "dining_table_setup_rand"
++    ],
+     "integration_test_string": "table_dining_setup_rand object_demo render_cycles"
+   },
+   {
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.sofa_setup.sofa_setup_centered_rand",
+-    "old_names": ["centered_sofa_setup_rand"],
++    "old_names": [
++      "centered_sofa_setup_rand"
++    ],
+     "integration_test_string": "sofa_setup_centered_rand object_demo render_cycles"
+   },
+   {
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.sofa_setup.sofa_setup_wall_anchored_rand",
+-    "old_names": ["wall_anchored_sofa_setup_rand"],
++    "old_names": [
++      "wall_anchored_sofa_setup_rand"
++    ],
+     "integration_test_string": "sofa_setup_wall_anchored_rand object_demo render_cycles"
+   },
+   {
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.sofa_setup.sofa_setup_wall_rand",
+-    "old_names": ["wall_sofa_setup_rand"],
++    "old_names": [
++      "wall_sofa_setup_rand"
++    ],
+     "integration_test_string": "sofa_setup_wall_rand object_demo render_cycles"
+   },
+   {
+@@ -726,7 +756,9 @@
+   {
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.room.room_livingroom_rand",
+-    "old_names": ["livingroom_rand"]
++    "old_names": [
++      "livingroom_rand"
++    ]
+   },
+   {
+     "category": "Scene",
+@@ -829,7 +861,9 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.random_primitives.primitive_with_effect_rand",
+-    "old_names": ["primitives_rand"]
++    "old_names": [
++      "primitives_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -866,7 +900,9 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.bathroom_hardware.hardware_bathroom_rand",
+-    "old_names": ["bathroom_hardware_rand"]
++    "old_names": [
++      "bathroom_hardware_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -935,12 +971,16 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.cushion.cushion_bed_pillow_rand",
+-    "old_names": ["bed_pillow_rand"]
++    "old_names": [
++      "bed_pillow_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.cushion.cushion_throw_pillow_rand",
+-    "old_names": ["throw_pillow_rand"]
++    "old_names": [
++      "throw_pillow_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -965,17 +1005,23 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.ceiling_light.light_ceiling_rand",
+-    "old_names": ["ceiling_light_rand"]
++    "old_names": [
++      "ceiling_light_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_dining_rand",
+-    "old_names": ["dining_table_rand"]
++    "old_names": [
++      "dining_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_dining_circular_rand",
+-    "old_names": ["circular_dining_table_rand"]
++    "old_names": [
++      "circular_dining_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -984,37 +1030,51 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_coffee_rand",
+-    "old_names": ["coffee_table_rand"]
++    "old_names": [
++      "coffee_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_coffee_storage_rand",
+-    "old_names": ["coffee_table_storage_rand"]
++    "old_names": [
++      "coffee_table_storage_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_side_rand",
+-    "old_names": ["side_table_rand"]
++    "old_names": [
++      "side_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_coffee_circular_rand",
+-    "old_names": ["circular_coffee_table_rand"]
++    "old_names": [
++      "circular_coffee_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_side_circular_rand",
+-    "old_names": ["circular_side_table_rand"]
++    "old_names": [
++      "circular_side_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_cocktail_rand",
+-    "old_names": ["cocktail_table_rand"]
++    "old_names": [
++      "cocktail_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.table.table_cocktail_circular_rand",
+-    "old_names": ["circular_cocktail_table_rand"]
++    "old_names": [
++      "circular_cocktail_table_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1023,7 +1083,10 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.furniture_bases.base_pedestal_rand",
+-    "old_names": ["pedestal_base_rand", "base_single_stand_rand"]
++    "old_names": [
++      "pedestal_base_rand",
++      "base_single_stand_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1032,7 +1095,9 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.chair.chair_office_rand",
+-    "old_names": ["office_chair_rand"]
++    "old_names": [
++      "office_chair_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1041,7 +1106,9 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.chair.chair_dining_rand",
+-    "old_names": ["dining_chair_rand"]
++    "old_names": [
++      "dining_chair_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1050,17 +1117,23 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.chair.chair_seat_curvy_rand",
+-    "old_names": ["curvy_seat_rand"]
++    "old_names": [
++      "curvy_seat_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.chair.chair_seat_round_rand",
+-    "old_names": ["round_seat_rand"]
++    "old_names": [
++      "round_seat_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.chair.chair_base_wheeled_rand",
+-    "old_names": ["wheeled_base_rand"]
++    "old_names": [
++      "wheeled_base_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1073,12 +1146,16 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.lamp.lamp_ceiling_shade_rand",
+-    "old_names": ["ceiling_shade_lamp_rand"]
++    "old_names": [
++      "ceiling_shade_lamp_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.lamp.lamp_desk_rand",
+-    "old_names": ["desk_lamp_rand"]
++    "old_names": [
++      "desk_lamp_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1091,7 +1168,9 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.lamp.lamp_floor_rand",
+-    "old_names": ["floor_lamp_rand"]
++    "old_names": [
++      "floor_lamp_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1132,12 +1211,16 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.handles.handle_lever_rand",
+-    "old_names": ["lever_handle_rand"]
++    "old_names": [
++      "lever_handle_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.handles.handle_bar_pull_rand",
+-    "old_names": ["bar_pull_handle_rand"]
++    "old_names": [
++      "bar_pull_handle_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1146,12 +1229,16 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.handles.handle_curved_pull_rand",
+-    "old_names": ["curved_pull_handle_rand"]
++    "old_names": [
++      "curved_pull_handle_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.handles.handle_knob_rand",
+-    "old_names": ["knob_handle_rand"]
++    "old_names": [
++      "knob_handle_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1160,12 +1247,18 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.storage.storage_cell_shelf_rand",
+-    "old_names": ["shelves_rand", "slot_cabinet_rand"]
++    "old_names": [
++      "shelves_rand",
++      "slot_cabinet_rand"
++    ]
+   },
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.storage.storage_cabinet_with_door_rand",
+-    "old_names": ["cabinet_with_door_rand", "cabinet_rand"]
++    "old_names": [
++      "cabinet_with_door_rand",
++      "cabinet_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1174,7 +1267,9 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.storage.storage_cabinet_with_base_rand",
+-    "old_names": ["cabinet_with_base_rand"]
++    "old_names": [
++      "cabinet_with_base_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1195,43 +1290,58 @@
+   {
+     "category": "Cameras",
+     "name": "infinigen2.cameras.camera_monocular_in_bbox_rand",
+-    "old_names": ["monocular_camera_in_bbox_rand"],
++    "old_names": [
++      "monocular_camera_in_bbox_rand"
++    ],
+     "num_seeds": 3
+   },
+   {
+     "category": "Cameras",
+     "name": "infinigen2.cameras.camera_monocular_360_rand",
+-    "old_names": ["monocular_360_camera_rand"],
++    "old_names": [
++      "monocular_360_camera_rand"
++    ],
+     "num_seeds": 3
+   },
+   {
+     "category": "Cameras",
+     "name": "infinigen2.cameras.camera_linear_pan_rand",
+-    "old_names": ["linear_pan_camera_rand"],
++    "old_names": [
++      "linear_pan_camera_rand"
++    ],
+     "num_seeds": 3
+   },
+   {
+     "category": "Cameras",
+     "name": "infinigen2.cameras.camera_orbit_90_rand",
+-    "old_names": ["orbit_90_camera_rand"],
++    "old_names": [
++      "orbit_90_camera_rand"
++    ],
+     "num_seeds": 3
+   },
+   {
+     "category": "Cameras",
+     "name": "infinigen2.cameras.camera_rrt_trajectory",
+-    "old_names": ["rrt_camera", "camera_rrt"],
++    "old_names": [
++      "rrt_camera",
++      "camera_rrt"
++    ],
+     "num_seeds": 3
+   },
+   {
+     "category": "Cameras",
+     "name": "infinigen2.cameras.camera_random_walk",
+-    "old_names": ["random_walk_camera"],
++    "old_names": [
++      "random_walk_camera"
++    ],
+     "num_seeds": 3
+   },
+   {
+     "category": "Material",
+     "name": "infinigen2.shaders.base_materials.plastic.plastic_rand",
+-    "old_names": ["plastic_opaque_rand"],
++    "old_names": [
++      "plastic_opaque_rand"
++    ],
+     "presets": [
+       "plastic_black_rubberized_preset",
+       "plastic_black_translucent_preset",
+@@ -1284,7 +1394,9 @@
+   {
+     "category": "Object",
+     "name": "infinigen2.objects.leaf_ginko.leaf_ginkgo_rand",
+-    "old_names": ["leaf_ginko_rand"]
++    "old_names": [
++      "leaf_ginko_rand"
++    ]
+   },
+   {
+     "category": "Object",
+@@ -1302,5 +1414,13 @@
+     "category": "Scene",
+     "name": "infinigen2.scenes.room.bed_setup.bed_setup_rand",
+     "integration_test_string": "bed_setup_rand object_demo render_cycles"
++  },
++  {
++    "category": "Object",
++    "name": "infinigen2.terrain.warp_mountains.mountains_terrain_rand"
++  },
++  {
++    "category": "Scene",
++    "name": "infinigen2.terrain.warp_mountains.terrain_scene_rand"
+   }
+ ]
+diff --git a/src/infinigen2/terrain/__init__.py b/src/infinigen2/terrain/__init__.py
+new file mode 100644
+index 0000000..e6d8279
+--- /dev/null
++++ b/src/infinigen2/terrain/__init__.py
+@@ -0,0 +1,2 @@
++# Copyright (C) 2026, Princeton University.
++# This source code is licensed under the BSD-3-Clause license found in the LICENSE file in the root directory of this source tree.
+diff --git a/src/infinigen2/terrain/warp_mountains.py b/src/infinigen2/terrain/warp_mountains.py
+new file mode 100644
+index 0000000..c92320d
+--- /dev/null
++++ b/src/infinigen2/terrain/warp_mountains.py
+@@ -0,0 +1,574 @@
++
++# Copyright (C) 2026, Princeton University.
++# This source code is licensed under the BSD-3-Clause license found in the LICENSE file in the root directory of this source tree.
++
++"""The v1 `mountains` terrain element as a v2/procfunc stage.
++
++The numeric kernel is the Warp port validated bit-identical against
++Infinigen's own CPU and CUDA libraries in docs/lab/exp-warp-terrain-port.md
++(max |diff| = 0.0 over 16M points, 6x Infinigen's hand-written CUDA kernel).
++It is kept verbatim here; the wrapper around it is new.
++
++Two layers, per v2's convention:
++
++- `mountains_params_rand` is the *grammar*: it samples the element's
++  parameters with pf.random (v1's landtiles ranges), so every draw is a
++  recorded, seed-controlled node of the recipe graph.
++- `mountains_heightfield` is the *realized compute*: an opaque tracer
++  primitive that evaluates the element on the GPU and builds the displaced
++  plane. The tracer records the call and its parameter nodes; the GPU work
++  happens at render time, exactly like modifier baking.
++
++`terrain_scene_rand` composes the stage with sky lighting and a grammar-driven
++camera into a renderable outdoor scene.
++"""
++
++import logging
++import math
++from typing import NamedTuple
++
++import bpy
++import numpy as np
++import procfunc as pf
++import warp as wp
++
++from infinigen2.lighting.sky_lighting import sky_hosek_wilkie_with_sun_lamp_rand
++from infinigen2.shaders.base_materials.granite import granite_rand
++
++__all__ = [
++    "MountainsParams",
++    "mountains_params_rand",
++    "mountains_heightfield",
++    "mountains_terrain_rand",
++    "terrain_scene_rand",
++]
++
++logger = logging.getLogger(__name__)
++
++# FastNoiseLite's Gradients3D table, verbatim (see exp-warp-terrain-port.md);
++# float32 values, x/y/z interleaved.
++_GRADIENTS_3D = (
++    0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0,
++    0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
++    1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0,
++    1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
++    1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0,
++    1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
++    0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0,
++    0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
++    1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0,
++    1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
++    1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0,
++    1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
++    0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0,
++    0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
++    1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0,
++    1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
++    1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0,
++    1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
++    0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0,
++    0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
++    1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0,
++    1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
++    1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0,
++    1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
++    0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0,
++    0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
++    1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0,
++    1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
++    1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0,
++    1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
++    1.0, 1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0,
++    -1.0, 1.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0,
++)
++
++_GRADIENTS_3D_ARR: np.ndarray | None = None
++_WARP_READY = False
++
++
++def _grads_array() -> np.ndarray:
++    global _GRADIENTS_3D_ARR
++    if _GRADIENTS_3D_ARR is None:
++        _GRADIENTS_3D_ARR = np.asarray(_GRADIENTS_3D, dtype=np.float32)
++    return _GRADIENTS_3D_ARR
++
++
++def _warp_init():
++    global _WARP_READY
++    if not _WARP_READY:
++        wp.init()
++        _WARP_READY = True
++
++
++# ---------------------------------------------------------------------------
++# the Warp port of infinigen/terrain/source/common/elements/mountains.h
++# (hashing from Blender's blender_noise.h, noise from FastNoiseLite Perlin)
++# ---------------------------------------------------------------------------
++
++
++@wp.func
++def hash_bit_rotate(x: wp.uint32, k: wp.uint32) -> wp.uint32:
++    return (x << k) | (x >> (wp.uint32(32) - k))
++
++
++@wp.func
++def hash_bit_mix(a: wp.uint32, b: wp.uint32, c: wp.uint32):
++    a = a - c
++    a = a ^ hash_bit_rotate(c, wp.uint32(4))
++    c = c + b
++    b = b - a
++    b = b ^ hash_bit_rotate(a, wp.uint32(6))
++    a = a + c
++    c = c - b
++    c = c ^ hash_bit_rotate(b, wp.uint32(8))
++    b = b + a
++    a = a - c
++    a = a ^ hash_bit_rotate(c, wp.uint32(16))
++    c = c + b
++    b = b - a
++    b = b ^ hash_bit_rotate(a, wp.uint32(19))
++    a = a + c
++    c = c - b
++    c = c ^ hash_bit_rotate(b, wp.uint32(4))
++    b = b + a
++    return a, b, c
++
++
++@wp.func
++def hash_bit_final(a: wp.uint32, b: wp.uint32, c: wp.uint32):
++    c = c ^ b
++    c = c - hash_bit_rotate(b, wp.uint32(14))
++    a = a ^ c
++    a = a - hash_bit_rotate(c, wp.uint32(11))
++    b = b ^ a
++    b = b - hash_bit_rotate(a, wp.uint32(25))
++    c = c ^ b
++    c = c - hash_bit_rotate(b, wp.uint32(16))
++    a = a ^ c
++    a = a - hash_bit_rotate(c, wp.uint32(4))
++    b = b ^ a
++    b = b - hash_bit_rotate(a, wp.uint32(14))
++    c = c ^ b
++    c = c - hash_bit_rotate(b, wp.uint32(24))  # NOTE: b, not c -- as in Infinigen's header
++    return a, b, c
++
++
++@wp.func
++def myhash1(kx: wp.uint32) -> wp.uint32:
++    a = wp.uint32(0xdeadbeef + (1 << 2) + 13)
++    b = a
++    c = a
++    a = a + kx
++    a, b, c = hash_bit_final(a, b, c)
++    return c
++
++
++@wp.func
++def myhash2(kx: wp.uint32, ky: wp.uint32) -> wp.uint32:
++    a = wp.uint32(0xdeadbeef + (2 << 2) + 13)
++    b = a
++    c = a
++    b = b + ky
++    a = a + kx
++    a, b, c = hash_bit_final(a, b, c)
++    return c
++
++
++@wp.func
++def myhash3(kx: wp.uint32, ky: wp.uint32, kz: wp.uint32) -> wp.uint32:
++    a = wp.uint32(0xdeadbeef + (3 << 2) + 13)
++    b = a
++    c = a
++    c = c + kz
++    b = b + ky
++    a = a + kx
++    a, b, c = hash_bit_final(a, b, c)
++    return c
++
++
++@wp.func
++def uint_to_float_01(k: wp.uint32) -> wp.float32:
++    return wp.float32(k) / wp.float32(4294967295.0)
++
++
++@wp.func
++def hash_to_float1(kx: wp.uint32) -> wp.float32:
++    return uint_to_float_01(myhash1(kx))
++
++
++@wp.func
++def log_uniform(low: wp.float32, high: wp.float32, seed: wp.uint32) -> wp.float32:
++    # the C version evaluates this in FLOAT (C++'s float overloads of log/exp)
++    return wp.exp(wp.log(low) + (wp.log(high) - wp.log(low)) * hash_to_float1(seed))
++
++
++@wp.func
++def nhash(seed: int, x: int, y: int, z: int) -> int:
++    h = seed ^ x ^ y ^ z
++    h = h * 0x27D4EB2D
++    return h
++
++
++@wp.func
++def grad_coord(seed: int, xp: int, yp: int, zp: int, xd: wp.float32,
++               yd: wp.float32, zd: wp.float32, grads: wp.array(dtype=wp.float32)) -> wp.float32:
++    h = nhash(seed, xp, yp, zp)
++    h = h ^ (h >> 15)
++    h = h & (63 << 2)
++    xg = grads[h]
++    yg = grads[h | 1]
++    zg = grads[h | 2]
++    return xd * xg + yd * yg + zd * zg
++
++
++@wp.func
++def fast_floor(f: wp.float32) -> int:
++    # FastNoiseLite's FastFloor, faithfully: it truncates toward zero and then
++    # subtracts one for negatives, so FastFloor(-1.0) == -2 (not -1).
++    if f >= 0.0:
++        return int(f)
++    return int(f) - 1
++
++
++@wp.func
++def lerpf(a: wp.float32, b: wp.float32, t: wp.float32) -> wp.float32:
++    return a + t * (b - a)
++
++
++@wp.func
++def single_perlin(seed: int, x: wp.float32, y: wp.float32, z: wp.float32,
++                  grads: wp.array(dtype=wp.float32)) -> wp.float32:
++    x0 = fast_floor(x)
++    y0 = fast_floor(y)
++    z0 = fast_floor(z)
++    xd0 = x - wp.float32(x0)
++    yd0 = y - wp.float32(y0)
++    zd0 = z - wp.float32(z0)
++    xd1 = xd0 - 1.0
++    yd1 = yd0 - 1.0
++    zd1 = zd0 - 1.0
++    xs = xd0 * xd0 * xd0 * (xd0 * (xd0 * 6.0 - 15.0) + 10.0)
++    ys = yd0 * yd0 * yd0 * (yd0 * (yd0 * 6.0 - 15.0) + 10.0)
++    zs = zd0 * zd0 * zd0 * (zd0 * (zd0 * 6.0 - 15.0) + 10.0)
++    x0 = x0 * 501125321
++    y0 = y0 * 1136930381
++    z0 = z0 * 1720413743
++    x1 = x0 + 501125321
++    y1 = y0 + 1136930381
++    z1 = z0 + 1720413743
++    xf00 = lerpf(grad_coord(seed, x0, y0, z0, xd0, yd0, zd0, grads),
++                 grad_coord(seed, x1, y0, z0, xd1, yd0, zd0, grads), xs)
++    xf10 = lerpf(grad_coord(seed, x0, y1, z0, xd0, yd1, zd0, grads),
++                 grad_coord(seed, x1, y1, z0, xd1, yd1, zd0, grads), xs)
++    xf01 = lerpf(grad_coord(seed, x0, y0, z1, xd0, yd0, zd1, grads),
++                 grad_coord(seed, x1, y0, z1, xd1, yd0, zd1, grads), xs)
++    xf11 = lerpf(grad_coord(seed, x0, y1, z1, xd0, yd1, zd1, grads),
++                 grad_coord(seed, x1, y1, z1, xd1, yd1, zd1, grads), xs)
++    yf0 = lerpf(xf00, xf10, ys)
++    yf1 = lerpf(xf01, xf11, ys)
++    return lerpf(yf0, yf1, zs) * 0.964921414852142333984375
++
++
++@wp.func
++def perlin(x: wp.float32, y: wp.float32, z: wp.float32, mseed: int, moctaves: int,
++           mfreq: wp.float32, grads: wp.array(dtype=wp.float32)) -> wp.float32:
++    x = x * mfreq
++    y = y * mfreq
++    z = z * mfreq
++    seed = mseed
++    total = wp.float32(0.0)
++    amp = wp.float32(1.0 / 1.75)
++    for _i in range(moctaves):
++        noise = single_perlin(seed, x, y, z, grads)
++        total = total + noise * amp
++        amp = amp * lerpf(1.0, (noise + 1.0) * 0.5, 0.0)
++        x = x * 2.0
++        y = y * 2.0
++        z = z * 2.0
++        amp = amp * 0.5
++        seed = seed + 1
++    return total
++
++
++@wp.func
++def rampf(x: wp.float32, minin: wp.float32, maxin: wp.float32) -> wp.float32:
++    return wp.min(wp.float32(1.0), wp.max(wp.float32(0.0), (x - minin) / (maxin - minin)))
++
++
++@wp.kernel
++def mountains_kernel(
++    positions: wp.array(dtype=wp.vec3),
++    out: wp.array(dtype=wp.float32),
++    i_params: wp.array(dtype=wp.int32),
++    f_params: wp.array(dtype=wp.float32),
++    grads: wp.array(dtype=wp.float32),
++):
++    idx = wp.tid()
++    seed = i_params[0]
++    n = i_params[1]
++    is_3d = i_params[2]
++    spherical_radius = f_params[0]
++    min_freq = f_params[1]
++    max_freq = f_params[2]
++    octaves = int(f_params[3])
++    scale = f_params[4]
++    mask_freq = f_params[5]
++    mask_octaves = int(f_params[6])
++    mask_ramp_min = f_params[7]
++    mask_ramp_max = f_params[8]
++    slope_freq = f_params[9]
++    slope_octaves = int(f_params[10])
++    slope_scale = f_params[11]
++
++    pos = positions[idx]
++    px = pos[0]
++    py = pos[1]
++    pz = pos[2]
++    # branch-free selects: Warp's mutable variables inside `if` blocks are a trap
++    alt_sphere = wp.sqrt(px * px + py * py + pz * pz) - spherical_radius
++    altitude = wp.where(spherical_radius > 0.0, alt_sphere, pz)
++    pz = wp.where(is_3d == 0, wp.float32(0.0), pz)
++
++    height = wp.float32(0.0)
++    for i in range(n):
++        freq = log_uniform(min_freq, max_freq, myhash3(wp.uint32(seed), wp.uint32(i), wp.uint32(0)))
++        tmp = perlin(px, py, pz, wp.int32(myhash3(wp.uint32(seed), wp.uint32(i), wp.uint32(1))),
++                     octaves, freq, grads) * scale
++        mask = perlin(px, py, pz, wp.int32(myhash3(wp.uint32(seed), wp.uint32(i), wp.uint32(2))),
++                      mask_octaves, mask_freq, grads)
++        tmp = tmp * rampf(mask, mask_ramp_min, mask_ramp_max)
++        height = wp.max(tmp, height)
++    height = height + perlin(px, py, pz, wp.int32(myhash2(wp.uint32(seed), wp.uint32(4))),
++                             slope_octaves, slope_freq, grads) * slope_scale
++    out[idx] = altitude - height
++
++
++# ---------------------------------------------------------------------------
++# the v2 stage around the kernel
++# ---------------------------------------------------------------------------
++
++
++class MountainsParams(NamedTuple):
++    """Parameters of the v1 mountains element, as landtiles samples them."""
++
++    seed: int
++    min_freq: float
++    max_freq: float
++    height: float
++    coverage: float
++    slope_height: float
++    n_groups: int = 3
++    octaves: int = 15
++    mask_freq_ratio: float = 1.0
++    mask_octaves: int = 2
++    slope_freq: float = 0.01
++    slope_octaves: int = 9
++
++
++@pf.tracer.grammar
++def mountains_params_rand(rng: pf.RNG) -> MountainsParams:
++    """Sample the element's parameters. Ranges are v1 landtiles' (custom.py)."""
++    (
++        rng_seed,
++        rng_min_freq,
++        rng_max_freq,
++        rng_height,
++        rng_coverage,
++        rng_slope_height,
++    ) = rng.spawn(6)
++    return MountainsParams(
++        seed=pf.random.randint(rng_seed, 0, 2**31),
++        min_freq=pf.random.uniform(rng_min_freq, 0.0005, 0.002),
++        max_freq=pf.random.uniform(rng_max_freq, 0.003, 0.004),
++        height=pf.random.uniform(rng_height, 60.0, 90.0),
++        coverage=pf.random.uniform(rng_coverage, 0.4, 0.6),
++        slope_height=pf.random.uniform(rng_slope_height, 4.0, 6.0),
++    )
++
++
++def _element_params(params: MountainsParams) -> tuple[np.ndarray, np.ndarray]:
++    """Pack the ABI the kernel expects (mirrors v1 Mountains.__init__)."""
++    i_params = np.ascontiguousarray(
++        np.array([int(params.seed), params.n_groups, 0], dtype=np.int32)
++    )
++    mask_ramp_min = -1.1 - params.coverage * 2
++    mask_ramp_max = -0.9 - params.coverage * 2
++    f_params = np.ascontiguousarray(
++        np.array(
++            [
++                -1.0,  # spherical_radius: a heightfield, not a shell
++                params.min_freq,
++                params.max_freq,
++                params.octaves,
++                params.height * 2,
++                params.min_freq * params.mask_freq_ratio,
++                params.mask_octaves,
++                mask_ramp_min,
++                mask_ramp_max,
++                params.slope_freq,
++                params.slope_octaves,
++                params.slope_height,
++            ],
++            dtype=np.float32,
++        )
++    )
++    return i_params, f_params
++
++
++@pf.tracer.primitive
++def mountains_heightfield(
++    params: MountainsParams,
++    size: float = 2000.0,
++    resolution: int = 512,
++) -> pf.MeshObject:
++    """Evaluate the mountains element on the GPU and build a displaced plane.
++
++    Opaque to the tracer on purpose: the evaluation is realized compute, like
++    modifier baking - the recipe records the call and the parameter nodes that
++    feed it (mountains_params_rand), not the 512x512 heights.
++    """
++    _warp_init()
++
++    i_params, f_params = _element_params(params)
++
++    axis = np.linspace(-size / 2.0, size / 2.0, resolution, dtype=np.float32)
++    xv, yv = np.meshgrid(axis, axis, indexing="ij")
++    positions = np.ascontiguousarray(
++        np.stack([xv, yv, np.zeros_like(xv)], axis=-1).reshape(-1, 3)
++    )
++
++    with wp.ScopedDevice("cuda:0"):
++        w_positions = wp.array(positions, dtype=wp.vec3)
++        w_out = wp.zeros(len(positions), dtype=wp.float32)
++        w_i = wp.array(i_params, dtype=wp.int32)
++        w_f = wp.array(f_params, dtype=wp.float32)
++        w_grads = wp.array(_grads_array(), dtype=wp.float32)
++        wp.launch(
++            mountains_kernel,
++            dim=len(positions),
++            inputs=[w_positions, w_out, w_i, w_f, w_grads],
++        )
++        sdf = w_out.numpy()
++
++    heights = -sdf  # the element returns altitude - height; the grid is flat
++    zmax = float(heights.max())
++    logger.info(
++        f"mountains_heightfield: {resolution}x{resolution} over {size:g}m, "
++        f"height range {heights.min():.1f}..{zmax:.1f}"
++    )
++
++    verts = np.stack(
++        [positions[:, 0], positions[:, 1], heights.astype(np.float32)], axis=1
++    )
++    faces = _grid_quads(resolution, resolution)
++
++    mesh = bpy.data.meshes.new("mountains_terrain")
++    mesh.from_pydata(verts.tolist(), [], faces.tolist())
++    mesh.update()
++    mesh.polygons.foreach_set("use_smooth", np.ones(len(mesh.polygons), dtype=bool))
++    obj = bpy.data.objects.new("mountains_terrain", mesh)
++    bpy.context.scene.collection.objects.link(obj)
++    return pf.MeshObject(obj)
++
++
++def _grid_quads(nx: int, ny: int) -> np.ndarray:
++    idx = np.arange(nx * ny).reshape(nx, ny)
++    a = idx[:-1, :-1].ravel()
++    b = idx[:-1, 1:].ravel()
++    c = idx[1:, 1:].ravel()
++    d = idx[1:, :-1].ravel()
++    return np.stack([a, b, c, d], axis=1)
++
++
++class MountainsTerrainResult(NamedTuple):
++    mesh: pf.MeshObject
++    params: MountainsParams
++    size: float
++
++
++@pf.tracer.grammar
++def mountains_terrain_rand(
++    rng: pf.RNG,
++    size: float = 2000.0,
++    resolution: int = 512,
++) -> MountainsTerrainResult:
++    """The mountains element as a v2 terrain stage: sampled parameters and the
++    material choice in the recipe graph, GPU evaluation deferred to render
++    time."""
++    rng_params, rng_material = rng.spawn(2)
++    params = mountains_params_rand(rng_params)
++    mesh = mountains_heightfield(params, size=size, resolution=resolution)
++    material = granite_rand(
++        rng_material, vector=pf.nodes.shader.geometry().position
++    )
++    pf.ops.object.set_material(mesh, material=material)
++    return MountainsTerrainResult(mesh=mesh, params=params, size=size)
++
++
++class TerrainSceneResult(NamedTuple):
++    all_objects: list
++    cameras: list
++    lights: list
++    environment: pf.World | None
++    dimensions: pf.Vector
++
++
++def _look_at_rotation(location, target) -> pf.Euler:
++    """Euler XYZ rotating the camera's -Z onto (target - location).
++
++    With yaw-only azimuth: pitch = acos(-dz), yaw = atan2(-dx, dy) of the
++    normalized direction. NumPy ops keep this working on ValueProxies while
++    tracing, where the drawn distance/height/azimuth are recorded nodes.
++    """
++    direction = np.asarray(target, dtype=float) - np.asarray(location, dtype=float)
++    direction = direction / np.linalg.norm(direction)
++    dx, dy, dz = direction[0], direction[1], direction[2]
++    m = np.sqrt(1.0 - dz * dz)
++    return pf.Euler(
++        (np.arccos(-dz), 0.0, np.arctan2(-dx, dy)),
++        "XYZ",
++    )
++
++
++@pf.tracer.grammar
++def terrain_scene_rand(
++    rng: pf.RNG,
++    dimensions: pf.Vector | None = None,
++    frame_start: int = 1,
++    frame_end: int = 1,
++) -> TerrainSceneResult:
++    """One outdoor scene: Warp mountains under Hosek-Wilkie sky, camera placed
++    by grammar (distance/height/azimuth drawn, look-at computed)."""
++    rng_terrain, rng_camera, rng_sky = rng.spawn(3)
++
++    if dimensions is None:
++        dimensions = pf.Vector((2000.0, 2000.0, 200.0))
++    terrain = mountains_terrain_rand(rng_terrain, size=float(dimensions.x))
++
++    rng_dist, rng_height, rng_azimuth = rng_camera.spawn(3)
++    distance = pf.random.uniform(rng_dist, 250.0, 600.0)
++    height = pf.random.uniform(rng_height, 40.0, 160.0)
++    azimuth = pf.random.uniform(rng_azimuth, 0.0, 2.0 * math.pi)
++    camera = pf.ops.primitives.perspective_camera(focal_length_mm=60)
++    location = pf.Vector(
++        (distance * math.cos(azimuth), -distance * math.sin(azimuth), height)
++    )
++    pf.ops.object.set_transform(
++        camera,
++        location=location,
++        rotation_euler=_look_at_rotation(
++            (distance * math.cos(azimuth), -distance * math.sin(azimuth), height),
++            (0.0, 0.0, 0.0),
++        ),
++    )
++    camera.item().name = "Camera"
++
++    sky = sky_hosek_wilkie_with_sun_lamp_rand(rng_sky)
++
++    return TerrainSceneResult(
++        all_objects=[terrain.mesh],
++        cameras=[camera],
++        lights=list(sky.lights),
++        environment=sky.environment,
++        dimensions=dimensions,
++    )

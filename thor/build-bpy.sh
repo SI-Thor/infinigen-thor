@@ -8,36 +8,11 @@
 # Infinigen pins bpy==4.2.0, so the only path is building the Python module
 # (WITH_PYTHON_MODULE) from source against CPython 3.11 (the Python Blender 4.2
 # embeds) with Cycles CUDA kernels for the Thor's Blackwell GPU (compute
-# capability 11.0 -> sm_110, CUDA 13.2 at /usr/local/cuda).
-#
-# WHY THERE IS NO OPTIX DEVICE (read before "fixing" it):
-#   The OptiX *SDK* does ship an ARM build - NVIDIA's download page lists
-#   "OptiX SDK 9.1 (Windows, Linux, Arm)" and the legacy page lists 8.1.0 as
-#   "(Windows, Linux, Arm)". The SDK is not the problem.
-#   The problem is the *hardware*: the Jetson AGX Thor T5000 has NO RT CORES.
-#   NVIDIA staff on the developer forum, 1 Sept 2025: "There is no RT cores in
-#   AGX T5000" - and the module datasheet's "Modern Graphics features: Ray
-#   Tracing" line was a datasheet bug ("This is a mistake in module data sheet.
-#   We will fix it."). Without RT cores the OptiX ray tracer has nothing to
-#   accelerate with, so the renderer stays on CUDA. This is a hardware fact and
-#   will not change with an SDK update.
-#   (The OptiX *denoiser* is a different animal - it runs on compute and does
-#   not need RT cores - but it needs libnvoptix.so from the driver, and Cycles
-#   only compiles the OptiX denoiser in when WITH_CYCLES_DEVICE_OPTIX is on.
-#   thor/probe-thor.sh checks whether the driver ships it.)
-#
-# DENOISER: WITH_OPENIMAGEDENOISE is now ON.
-#   Infinigen 2.0's src/infinigen2/exporters/render_cycles.py defaults to
-#   DenoiseMode.BEST and RAISES RuntimeError("No usable denoiser ...") when
-#   neither OPTIX nor OPENIMAGEDENOISE is available (1.x only warns). A 2.0
-#   render on the Thor as built dies instead of degrading.
-#   Blender 4.2 builds OIDN 2.3.0 FROM SOURCE (versions.cmake pins
-#   oidn-2.3.0.src.tar.gz), so there is no aarch64 package to find - the build
-#   does it. But upstream's openimagedenoise.cmake turns the SYCL, CUDA and
-#   HIP devices ON for every non-Windows-ARM platform, which cannot build on
-#   aarch64. thor/patches/blender-v4.2.0-oidn-arm64-cpu-only.patch forces the
-#   CPU device (OIDN 2.3.0 supports ARM64/NEON); set OIDN_DEVICE_CUDA_ARCH=110
-#   to build the CUDA device for sm_110 instead.
+# capability 11.0 -> sm_110, CUDA 13.2 at /usr/local/cuda). OptiX is OFF
+# because the Thor's GPU has no RT cores (NVIDIA staff, developer forums,
+# 2025-09-01: "There is no RT cores in AGX T5000") and OptiX requires them;
+# it is a hardware limit, not a missing SDK - NVIDIA does ship OptiX 9.x
+# for Arm/aarch64. CUDA-only.
 #
 # Environment / box assumptions (see thor/SPIKE.md):
 #   - Ubuntu 24.04 (noble) aarch64, 14 cores, passwordless sudo for apt.
@@ -48,17 +23,20 @@
 #   space-free repo-local symlink .ext-thor -> that drive's thor-spike/ dir.
 #
 # Stages are idempotent: each is skipped if its output already exists.
-# Sources and build trees live under $EXT_LINK per the brief. The CPython
-# toolchain and the produced wheel live on the NVMe (.toolchain/, gitignored)
-# because the external cold shelf is NTFS-on-fuseblk here and it wedged hard
-# under load mid-run: processes D-stated on page faults from libpython for
-# 30+ min and the drive stayed unreadable even after a lazy umount. Runtime-
-# loadable artifacts must not page from that drive.
+# Sources and build trees default to the repo-local .build-thor/ on NVMe
+# (gitignored): the original external-drive build tree was parked on the
+# NTFS/fuseblk cold shelf when it wedged (2026-10-31) and the box re-cloned
+# from scratch there; override EXT_DRIVE when that drive is healthy again.
+# The CPython toolchain and the produced wheel live on the NVMe (.toolchain/,
+# gitignored) because runtime-loadable artifacts must not page from that
+# drive: it wedged hard under load mid-run - processes D-stated on page
+# faults from libpython for 30+ min and stayed unreadable even after a lazy
+# umount.
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXT_DRIVE="${EXT_DRIVE:-/media/caseydigennaro/TOSHIBA EXT/thor-spike}"
+EXT_DRIVE="${EXT_DRIVE:-$REPO/.build-thor}"
 EXT_LINK="$REPO/.ext-thor"                 # space-free path to $EXT_DRIVE
 PY_PREFIX="$REPO/.toolchain/python-3.11"   # CPython 3.11 toolchain (NVMe: see note below)
 BLENDER_SRC="$EXT_LINK/src/blender"        # blender v4.2.0 checkout
@@ -70,24 +48,23 @@ JOBS="${JOBS:-$(nproc)}"
 # Thor's Blackwell GPU is cc 11.0. CMake 3.28 accepts unknown numeric
 # architectures and passes them straight to nvcc (verified on this box).
 CUDA_ARCH="${CUDA_ARCH:-110}"
-# OIDN device: leave empty for the CPU device (NEON); set to 110 for the OIDN
-# CUDA device on sm_110. The OIDN CUDA device needs the same -arch discipline
-# as everything else on this box: nvcc's default target is sm_75 and those
-# cubins cannot load here.
-OIDN_DEVICE_CUDA_ARCH="${OIDN_DEVICE_CUDA_ARCH:-}"
 
 stage() { printf '\n=== [%s] %s (start %s)\n' "$(date +%H:%M:%S)" "$1" "$(date +%s)"; }
 log()   { echo "[build-bpy] $*"; }
 
-mkdir -p "$EXT_DRIVE" "$WHEEL_DIR" "$LOG_DIR"
+# Create the real directories first, then (re)point the space-free symlink,
+# then create dirs reached through the symlink: mkdir -p through a dangling
+# or stale .ext-thor fails with EEXIST before ln gets a chance to fix it.
+mkdir -p "$EXT_DRIVE" "$WHEEL_DIR"
 ln -sfn "$EXT_DRIVE" "$EXT_LINK"
+mkdir -p "$LOG_DIR"
 
 # ---------------------------------------------------------------------------
 stage 0 "apt dependencies"
 # System-library build of Blender 4.2 (no vcpkg) + Infinigen's documented deps.
 # Not packaged in noble: OpenSubdiv is 'libosd-dev' (3.5), USD is absent
-# (WITH_USD=OFF). OIDN is NOT in this list on purpose - Blender builds OIDN
-# 2.3.0 from source and noble's libtbb-dev covers its TBB dependency.
+# (WITH_USD=OFF). OIDN is absent from noble too but builds from source
+# (stage 3c below) since ispc ships for arm64.
 APT_PKGS=(
   build-essential git cmake ninja-build gettext wget pkg-config
   libx11-dev libxxf86vm-dev libxcursor-dev libxi-dev libxrandr-dev
@@ -102,7 +79,10 @@ APT_PKGS=(
   libreadline-dev libncurses-dev libgmp-dev libpotrace-dev
   libfreetype-dev libharfbuzz-dev libfribidi-dev libudev-dev libdrm-dev
   libepoxy-dev libglew-dev libglfw3-dev libglm-dev
+  ispc
 )
+# ispc: OIDN compiles its CPU kernels with it; noble's 1.22 is a native
+# arm64 build, which is what makes WITH_OPENIMAGEDENOISE=ON possible here.
 sudo apt-get install -y -q "${APT_PKGS[@]}" > "$LOG_DIR/apt.log" 2>&1 || {
   log "apt install had failures, inspect $LOG_DIR/apt.log"; exit 1; }
 
@@ -142,11 +122,11 @@ assert sys.version_info[:2] == (3, 11)
 assert sysconfig.get_config_var("Py_ENABLE_SHARED")' 2>/dev/null; then
   log "python 3.11 already OK"
 else
-  cd "$EXT_LINK/src"
-  rm -rf Python-3.11.13 python-3.11
-  [[ -f python-3.11.13.tgz ]] || curl -sLO https://www.python.org/ftp/python/3.11.13/Python-3.11.13.tgz
-  mv -f Python-3.11.13.tgz python-3.11.13.tgz 2>/dev/null || true
-  tar xf python-3.11.13.tgz
+  mkdir -p "$REPO/.toolchain/src"
+  cd "$REPO/.toolchain/src"
+  rm -rf Python-3.11.13
+  [[ -f Python-3.11.13.tgz ]] || curl -sL -o Python-3.11.13.tgz https://www.python.org/ftp/python/3.11.13/Python-3.11.13.tgz
+  tar xf Python-3.11.13.tgz
   cd Python-3.11.13
   LDFLAGS="-Wl,-rpath,$PY_PREFIX/lib" ./configure --prefix="$PY_PREFIX" \
     --enable-shared --with-ensurepip=install > "$LOG_DIR/cpython-configure.log" 2>&1
@@ -208,6 +188,52 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+stage 3c "OpenImageDenoise 2.3.0 (CPU/NEON, static)"
+# Noble has no OIDN package and Blender's build_environment route is x86-only
+# for it: openimagedenoise.cmake turns on OIDN_DEVICE_{SYCL,CUDA,HIP} for
+# every non-Apple, non-Windows-ARM platform and injects Intel's dpcpp as the
+# compiler (thor/patches/blender-oidn-linux-aarch64-cpu.patch fixes that
+# guard for anyone using `make deps`). This script builds the pinned version
+# (versions.cmake: OIDN_VERSION 2.3.0, MD5 checked against Blender's pin)
+# CPU-only - OIDN >= 2.2 supports ARM64/NEON, and noble ships a native arm64
+# ispc 1.22 for the CPU kernels. Static, and the three archives OIDN 2.x
+# installs (api/core/device_cpu) are merged into one libOpenImageDenoise.a:
+# Blender's FindOpenImageDenoise only links the "OpenImageDenoise" component.
+OIDN_PREFIX="$EXT_LINK/oidn"
+OIDN_SRC="$EXT_LINK/src/oidn-2.3.0"
+if [[ -f "$OIDN_PREFIX/lib/libOpenImageDenoise.a" ]] && ar t "$OIDN_PREFIX/lib/libOpenImageDenoise.a" | grep -q "^cpu_"; then
+  log "OIDN already installed (merged static archive)"
+else
+  mkdir -p "$EXT_LINK/src"; cd "$EXT_LINK/src"
+  [[ -d oidn-2.3.0 ]] || {
+    curl -sL -o oidn-2.3.0.src.tar.gz \
+      https://github.com/OpenImageDenoise/oidn/releases/download/v2.3.0/oidn-2.3.0.src.tar.gz
+    echo "31a3d8b9168966a2fa93daa6becad586  oidn-2.3.0.src.tar.gz" | md5sum -c -
+    tar xzf oidn-2.3.0.src.tar.gz
+  }
+  cmake -S "$OIDN_SRC" -B "$OIDN_SRC/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$OIDN_PREFIX" \
+    -DOIDN_STATIC_LIB=ON -DOIDN_APPS=OFF -DOIDN_FILTER_RTLIGHTMAP=OFF \
+    -DOIDN_DEVICE_CPU=ON -DOIDN_DEVICE_SYCL=OFF -DOIDN_DEVICE_CUDA=OFF \
+    -DOIDN_DEVICE_HIP=OFF -DISPC_EXECUTABLE="$(command -v ispc)" \
+    > "$LOG_DIR/oidn-configure.log" 2>&1
+  ninja -C "$OIDN_SRC/build" -j"$JOBS" > "$LOG_DIR/oidn-build.log" 2>&1
+  cmake --install "$OIDN_SRC/build" > "$LOG_DIR/oidn-install.log" 2>&1
+  # OIDN ignores BUILD_SHARED_LIBS; OIDN_STATIC_LIB=ON is the real switch.
+  cd "$OIDN_PREFIX/lib"
+  ar -M <<AR
+CREATE merged.a
+ADDLIB libOpenImageDenoise.a
+ADDLIB libOpenImageDenoise_core.a
+ADDLIB libOpenImageDenoise_device_cpu.a
+SAVE
+END
+AR
+  mv merged.a libOpenImageDenoise.a
+  log "OIDN installed at $OIDN_PREFIX (merged static archive)"
+fi
+
+# ---------------------------------------------------------------------------
 stage 4 "cmake configure bpy module (CUDA arch $CUDA_ARCH)"
 cmake -S "$BLENDER_SRC" -B "$BUILD_DIR" -G Ninja \
   -C "$BLENDER_SRC/build_files/cmake/config/bpy_module.cmake" \
@@ -219,7 +245,7 @@ cmake -S "$BLENDER_SRC" -B "$BUILD_DIR" -G Ninja \
   -DOPENIMAGEIO_ROOT_DIR="$OIIO_PREFIX" \
   -UOPENIMAGEIO_INCLUDE_DIR -UOPENIMAGEIO_LIBRARY -UOPENIMAGEIO_LIBRARIES \
   -UOPENIMAGEIO_UTIL_LIBRARY \
-  -DCMAKE_CXX_STANDARD_LIBRARIES="-ltiff" \
+  -DCMAKE_CXX_STANDARD_LIBRARIES="-ltiff -ltbb" \
   -DWITH_CYCLES_CUDA_BINARIES=ON \
   -DCYCLES_CUDA_BINARIES_ARCH=sm_"$CUDA_ARCH" \
   -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
@@ -227,7 +253,7 @@ cmake -S "$BLENDER_SRC" -B "$BUILD_DIR" -G Ninja \
   -DWITH_CYCLES_DEVICE_HIP=OFF \
   -DWITH_CYCLES_DEVICE_ONEAPI=OFF \
   -DWITH_OPENIMAGEDENOISE=ON \
-  -DOIDN_DEVICE_CUDA_ARCH="$OIDN_DEVICE_CUDA_ARCH" \
+  -DOPENIMAGEDENOISE_ROOT_DIR="$OIDN_PREFIX" \
   -DWITH_ALEMBIC=OFF \
   -DWITH_OPENCOLLADA=OFF \
   -DWITH_USD=OFF \
@@ -249,42 +275,30 @@ cd "$BLENDER_SRC/build_files/utils"
 ls -la "$WHEEL_DIR"
 
 # ---------------------------------------------------------------------------
-stage 7 "smoke test: import bpy + render on CPU and CUDA"
+stage 7 "smoke test: import bpy, assert a denoiser, render CPU + CUDA"
+# The denoiser assertions are the point: phase 1 shipped a wheel without
+# OIDN and only Infinigen's warn-only fallback revealed it. A wheel that
+# cannot denoise must fail the build here, loudly.
 SMOKE="$EXT_LINK/logs/bpy-smoke"
 rm -rf "$SMOKE"; mkdir -p "$SMOKE"
 "$PY" -m venv "$SMOKE/venv"
 "$SMOKE/venv/bin/pip" -q install "$WHEEL_DIR"/bpy-*.whl
 "$SMOKE/venv/bin/python" - <<'EOF' 2>&1 | tee "$LOG_DIR/bpy-smoke.log"
-import bpy, time, sys
+import bpy, time
 print("bpy", bpy.app.version_string, "| build:", bpy.app.build_platform.decode())
+# bpy.app.build_options has no openimagedenoise field in 4.2; the operative
+# signal is whether Cycles accepts the enum value (raises when OIDN is not
+# compiled in - verified: the phase-1 wheel rejects it, this one must not).
 for dev in bpy.context.preferences.addons["cycles"].preferences.devices:
     print("cycles device:", dev.name, dev.type)
-# --- denoiser assertion -------------------------------------------------
-# Infinigen 2.0 raises RuntimeError("No usable denoiser ...") rather than
-# degrading, so a wheel that renders but cannot denoise is not usable by the
-# engine. Assert it here, on the box, every time the wheel is rebuilt.
-denoisers = {}
-for name in ("OPTIX", "OPENIMAGEDENOISE"):
-    try:
-        scene.cycles.denoiser = name
-        denoisers[name] = "AVAILABLE"
-    except Exception as e:
-        denoisers[name] = "UNAVAILABLE (%s)" % type(e).__name__
-print("denoisers:", denoisers)
-if not any(v == "AVAILABLE" for v in denoisers.values()):
-    print("SMOKE FAIL: no denoiser - Infinigen 2.0 render_cycles.py will raise")
-    sys.exit(2)
-usable = [k for k, v in denoisers.items() if v == "AVAILABLE"]
-scene.cycles.denoiser = usable[0]
-scene.cycles.use_denoising = True
-print("denoiser in use:", scene.cycles.denoiser)
-
 for device in ("CPU", "GPU"):
     scene = bpy.data.scenes["Scene"]
-    scene.cycles.use_denoising = False  # OIDN is not available in this build
     scene.render.engine = "CYCLES"
+    scene.cycles.use_denoising = True
+    scene.cycles.denoiser = "OPENIMAGEDENOISE"  # raises if OIDN is missing
     if device == "GPU":
-        # Prefer CUDA on the Thor (no RT cores -> no usable OptiX renderer).
+        # Prefer CUDA on the Thor: its GPU has no RT cores, so OptiX cannot
+        # exist on this box regardless of SDK support.
         prefs = bpy.context.preferences.addons["cycles"].preferences
         prefs.compute_device_type = "CUDA"
         prefs.get_devices()
@@ -295,6 +309,7 @@ for device in ("CPU", "GPU"):
     scene.cycles.samples = 32
     scene.render.filepath = f"/tmp/bpy-smoke-{device.lower()}.png"
     t0 = time.time(); bpy.ops.render.render(write_still=True)
-    print(f"render[{device}] {time.time()-t0:.1f}s -> {scene.render.filepath}")
+    print(f"render[{device}, denoised] {time.time()-t0:.1f}s -> {scene.render.filepath}")
+print("denoiser assertions passed")
 EOF
 log "DONE. wheel in $WHEEL_DIR"

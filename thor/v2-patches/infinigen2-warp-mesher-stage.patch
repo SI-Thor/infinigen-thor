@@ -1,0 +1,595 @@
+diff --git a/src/infinigen2/terrain/warp_mesher.py b/src/infinigen2/terrain/warp_mesher.py
+new file mode 100644
+---
++++ b/src/infinigen2/terrain/warp_mesher.py
+@@ -0,0 +1,574 @@
++
++# Copyright (C) 2026, Princeton University.
++# This source code is licensed under the BSD-3-Clause license found in the LICENSE file in the root directory of this source tree.
++
++"""The OcMesher as a v2 stage: lab 4's Warp SDF evaluation wired into the mesher.
++
++docs/lab/exp-warp-mesher-sdf.md measured that the real OcMesher spends
++67.6–69.8 % of its wall inside SDF evaluation, and that the two elements of a
++realistic terrain scene (``mountains`` + ``warped_rocks``, the CPU libraries
++Infinigen ships) are **bit-identical in Warp** (max |diff| = 0.0 on the
++mesher's own octree batches, and against a compiled-from-header oracle at
++every intermediate) at 75–85× the CPU libraries. This module turns that
++result into an engine stage:
++
++- the numeric kernels are the verified ports, kept verbatim (``mountains``
++  from round 2's ``warp_mountains``; ``warped_rocks`` from lab 4);
++- :class:`WarpSDFElement` adapts an element to the OcMesher's kernel ABI
++  (call a batch of points, get SDF values back) with resident device buffers;
++  :class:`CpuSDFElement` is the same adapter over Infinigen's own CPU
++  libraries — the verification and the timing baseline;
++- ``terrain_mesh_params_rand`` is the *grammar* (element seeds and ranges,
++  camera placement, LOD) so every draw is a recorded, seed-controlled node;
++- ``terrain_mesh`` is the *realized compute*: an opaque tracer primitive that
++  runs the real OcMesher (the vendored prebuilt ``core.so``) with the SDF
++  answered on the GPU, and links the resulting meshes into the scene. A
++  camera or parameter edit is a graph edit, and re-meshing — the expensive
++  part — is this leaf's execution: live re-meshing is a stage, not a rebuild.
++
++``terrain_mesh_scene_rand`` composes it with sky lighting and material into a
++renderable outdoor scene, the same shape as round 2's ``terrain_scene_rand``.
++"""
++
++import ctypes
++import logging
++import math
++import os
++from pathlib import Path
++from typing import Any, Callable, NamedTuple
++
++import bpy
++import numpy as np
++import procfunc as pf
++import warp as wp
++
++from infinigen2.terrain.warp_mountains import (
++    _grads_array,
++    _warp_init,
++    hash_to_float1,
++    log_uniform,
++    mountains_kernel,
++    myhash2,
++    myhash3,
++    perlin,
++    rampf,
++)
++
++__all__ = [
++    "CpuSDFElement",
++    "TerrainMeshParams",
++    "WarpSDFElement",
++    "terrain_mesh",
++    "terrain_mesh_params_rand",
++    "terrain_mesh_scene_rand",
++]
++
++logger = logging.getLogger(__name__)
++
++#: The vendored pieces lab 4 left: the OcMesher package and the element
++#: libraries/headers copied out of the v1 tree (nothing there is written).
++#: this file is <worktree>/src/infinigen-upstream/src/infinigen2/terrain/
++#: warp_mesher.py, so the worktree root is five parents up; an engine that
++#: installs the vendored pieces elsewhere points INFINIGEN_TERRAIN_VENDOR
++#: at it instead.
++_VENDOR = Path(
++    os.environ.get("INFINIGEN_TERRAIN_VENDOR")
++    or (Path(__file__).resolve().parents[5] / "vendor")
++)
++_OCMESHER_PATH = _VENDOR / "OcMesher"
++_TERRAIN_PATH = _VENDOR / "infinigen-terrain"
++
++_SENSOR_WIDTH_MM = 36.0  # Blender's default camera sensor
++
++
++# ---------------------------------------------------------------------------
++# the warped_rocks element in Warp (lab 4's port, verbatim)
++# ---------------------------------------------------------------------------
++
++
++@wp.func
++def wr_log_uniform2(low: wp.float32, high: wp.float32, seed: wp.uint32) -> wp.float32:
++    # the C version evaluates this in FLOAT, and its inner hash is the
++    # ONE-argument hash_to_float (lab 4 §7 — the trap that cost half a day)
++    return wp.exp(wp.log(low) + (wp.log(high) - wp.log(low)) * hash_to_float1(seed))
++
++
++@wp.kernel
++def warped_rocks_kernel(
++    positions: wp.array(dtype=wp.vec3),
++    out: wp.array(dtype=wp.float32),
++    i_params: wp.array(dtype=wp.int32),
++    f_params: wp.array(dtype=wp.float32),
++    grads: wp.array(dtype=wp.float32),
++):
++    idx = wp.tid()
++    seed = i_params[0]
++    slope_is_3d = i_params[2]
++    supressing_param = f_params[0]
++    content_min_freq = f_params[1]
++    content_max_freq = f_params[2]
++    content_octaves = int(f_params[3])
++    content_scale = f_params[4]
++    warp_min_freq = f_params[5]
++    warp_max_freq = f_params[6]
++    warp_octaves = int(f_params[7])
++    warp_scale = f_params[8]
++    slope_freq = f_params[9]
++    slope_octaves = int(f_params[10])
++    slope_scale = f_params[11]
++    slope_shift = f_params[12]
++
++    pos = positions[idx]
++    px = pos[0]
++    py = pos[1]
++    pz = pos[2]
++
++    content_freq = wr_log_uniform2(content_min_freq, content_max_freq, myhash2(wp.uint32(seed), wp.uint32(0)))
++    warp_freq = wr_log_uniform2(warp_min_freq, warp_max_freq, myhash2(wp.uint32(seed), wp.uint32(1)))
++    wx = perlin(px, py, pz, wp.int32(myhash2(wp.uint32(seed), wp.uint32(2))), warp_octaves, warp_freq, grads) * warp_scale
++    wy = perlin(px, py, pz, wp.int32(myhash2(wp.uint32(seed), wp.uint32(3))), warp_octaves, warp_freq, grads) * warp_scale
++    wz = perlin(px, py, pz, wp.int32(myhash2(wp.uint32(seed), wp.uint32(4))), warp_octaves, warp_freq, grads) * warp_scale
++    content = perlin(px + wx, py + wy, pz + wz,
++                     wp.int32(myhash2(wp.uint32(seed), wp.uint32(5))), content_octaves, content_freq, grads) * content_scale
++    sz = wp.where(slope_is_3d == 0, wp.float32(0.0), pz)
++    slope = perlin(px, py, sz, wp.int32(myhash2(wp.uint32(seed), wp.uint32(6))),
++                   slope_octaves, slope_freq, grads) * slope_scale + slope_shift
++    out[idx] = (pz - slope) * supressing_param + content
++
++
++# ---------------------------------------------------------------------------
++# elements: the OcMesher's kernel ABI over either implementation
++# ---------------------------------------------------------------------------
++
++
++class WarpSDFElement:
++    """One terrain element evaluated by its Warp kernel, resident buffers.
++
++    The mesher calls ``element(XYZ)`` with the octree's query batches; this
++    adapter uploads the batch, launches, downloads — no per-call allocation,
++    which is the whole difference from Infinigen's own CUDA library (lab 4
++    §4.3: the hand-written kernel cudaMallocs and copies per call).
++    """
++
++    def __init__(self, name: str, kernel: Callable, i_params, f_params):
++        import warp
++
++        self.name = name
++        self.kernel = kernel
++        _warp_init()
++        # i_params[2] is read by the warped_rocks kernel even though the CPU
++        # library's ABI has only two ints — pad, or the read is garbage
++        i_arr = np.asarray(i_params, dtype=np.int32)
++        if len(i_arr) < 3:
++            i_arr = np.pad(i_arr, (0, 3 - len(i_arr)))
++        self._i = warp.array(np.ascontiguousarray(i_arr), dtype=wp.int32, device="cuda:0")
++        self._f = warp.array(
++            np.ascontiguousarray(np.asarray(f_params, dtype=np.float32)),
++            dtype=wp.float32,
++            device="cuda:0",
++        )
++        self._grads = warp.array(_grads_array(), dtype=wp.float32, device="cuda:0")
++        # counters, the same shape lab 4's CountingKernel kept
++        self.calls = 0
++        self.points = 0
++        self.seconds = 0.0
++
++    def __call__(self, XYZ):
++        import time
++
++        pos = np.ascontiguousarray(np.asarray(XYZ, dtype=np.float64).astype(np.float32))
++        n = len(pos)
++        t0 = time.perf_counter()
++        with wp.ScopedDevice("cuda:0"):
++            w_pos = wp.array(pos, dtype=wp.vec3)
++            w_out = wp.zeros(n, dtype=wp.float32)
++            wp.launch(
++                self.kernel,
++                dim=n,
++                inputs=[w_pos, w_out, self._i, self._f, self._grads],
++            )
++            wp.synchronize()
++            sdf = w_out.numpy()
++        self.seconds += time.perf_counter() - t0
++        self.calls += 1
++        self.points += n
++        return sdf
++
++
++_INIT_ARGTYPES = [
++    ctypes.c_int32,
++    ctypes.c_int32,
++    ctypes.c_size_t,
++    ctypes.POINTER(ctypes.c_int32),
++    ctypes.c_size_t,
++    ctypes.POINTER(ctypes.c_float),
++    ctypes.c_size_t,
++    ctypes.POINTER(ctypes.c_int32),
++    ctypes.c_size_t,
++    ctypes.POINTER(ctypes.c_float),
++    ctypes.c_size_t,
++    ctypes.POINTER(ctypes.c_int32),
++    ctypes.c_size_t,
++    ctypes.POINTER(ctypes.c_float),
++]
++
++
++class CpuSDFElement:
++    """The same adapter over Infinigen's own CPU library (OpenMP).
++
++    Reference implementation for the bit-identity check and the timing
++    baseline. NOTE (lab 4 §7): the library's init() keeps the PARAMETER
++    POINTERS, so the arrays handed to it must outlive every call — they are
++    held on self for exactly that reason.
++    """
++
++    def __init__(self, name: str, so_path: str, i_params, f_params, n_aux: int = 0):
++        self.name = name
++        self.lib = ctypes.CDLL(str(so_path))
++        self.lib.init.argtypes = _INIT_ARGTYPES
++        # kept alive on purpose — the library evaluates through these pointers
++        self._i = np.ascontiguousarray(np.asarray(i_params, dtype=np.int32))
++        self._f = np.ascontiguousarray(np.asarray(f_params, dtype=np.float32))
++        self.lib.init(
++            0,
++            0,  # meta_param=0 -> is_caved=0
++            len(self._i),
++            self._i.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
++            len(self._f),
++            self._f.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
++            0,
++            None,
++            0,
++            None,
++            0,
++            None,
++            0,
++            None,
++        )
++        self.n_aux = n_aux
++        if n_aux:
++            self.lib.call.argtypes = [
++                ctypes.c_size_t,
++                ctypes.c_void_p,
++                ctypes.c_void_p,
++                ctypes.c_void_p,
++            ]
++        else:
++            self.lib.call.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
++        self.calls = 0
++        self.points = 0
++        self.seconds = 0.0
++
++    def __call__(self, XYZ):
++        import time
++
++        pos = np.ascontiguousarray(np.asarray(XYZ, dtype=np.float64).astype(np.float32))
++        n = len(pos)
++        sdf = np.zeros(n, dtype=np.float32)
++        t0 = time.perf_counter()
++        if self.n_aux:
++            aux = np.zeros(n, dtype=np.float32)
++            self.lib.call(n, pos.ctypes.data, sdf.ctypes.data, aux.ctypes.data)
++        else:
++            self.lib.call(n, pos.ctypes.data, sdf.ctypes.data)
++        self.seconds += time.perf_counter() - t0
++        self.calls += 1
++        self.points += n
++        return sdf
++
++
++# ---------------------------------------------------------------------------
++# the grammar
++# ---------------------------------------------------------------------------
++
++
++class TerrainMeshParams(NamedTuple):
++    """Everything the mesher needs, as the grammar samples it.
++
++    Element parameter packs mirror v1's ``terrain/elements/*.py`` at their
++    defaults (the exact packs lab 4 measured, so the numbers there carry
++    over); the camera is placed by the same draws round 2's terrain scene
++    uses, and the OcMesher consumes the resulting pose/K as its LOD driver.
++    """
++
++    mountains_seed: int
++    mountains_min_freq: float
++    mountains_max_freq: float
++    mountains_height: float
++    mountains_coverage: float
++    mountains_slope_height: float
++    rocks_seed: int
++    rocks_content_scale: float
++    rocks_warp_scale: float
++    rocks_slope_scale: float
++    camera_distance: float
++    camera_height: float
++    camera_azimuth: float
++    camera_pitch: float
++    focal_length_mm: float
++    pixels_per_cube: float
++
++
++@pf.tracer.grammar
++def terrain_mesh_params_rand(rng: pf.RNG) -> TerrainMeshParams:
++    """Sample the stage's parameters. Ranges keep the composed surface in the
++    block's z-band (verified over the draw ranges the way lab 4 verified its
++    fixed scene)."""
++    (
++        rng_m_seed,
++        rng_m_freq,
++        rng_m_height,
++        rng_r_seed,
++        rng_r_scale,
++        rng_cam_d,
++        rng_cam_h,
++        rng_cam_az,
++        rng_cam_pitch,
++        rng_focal,
++    ) = rng.spawn(10)
++    return TerrainMeshParams(
++        mountains_seed=pf.random.randint(rng_m_seed, 0, 2**31),
++        mountains_min_freq=pf.random.uniform(rng_m_freq, 0.0005, 0.002),
++        mountains_max_freq=pf.random.uniform(rng_m_freq, 0.003, 0.004),
++        mountains_height=pf.random.uniform(rng_m_height, 60.0, 90.0),
++        mountains_coverage=pf.random.uniform(rng_m_height, 0.4, 0.6),
++        mountains_slope_height=pf.random.uniform(rng_m_height, 4.0, 6.0),
++        rocks_seed=pf.random.randint(rng_r_seed, 0, 2**31),
++        rocks_content_scale=pf.random.uniform(rng_r_scale, 30.0, 50.0),
++        rocks_warp_scale=pf.random.uniform(rng_r_scale, 4.0, 6.0),
++        rocks_slope_scale=pf.random.uniform(rng_r_scale, 15.0, 25.0),
++        camera_distance=pf.random.uniform(rng_cam_d, 20.0, 30.0),
++        camera_height=pf.random.uniform(rng_cam_h, 8.0, 12.0),
++        camera_azimuth=pf.random.uniform(rng_cam_az, -0.2, 0.2),
++        camera_pitch=pf.random.uniform(rng_cam_pitch, 0.1, 0.2),
++        focal_length_mm=pf.random.uniform(rng_focal, 20.0, 40.0),
++        pixels_per_cube=8.0,
++    )
++
++
++def _mountains_pack(p: TerrainMeshParams):
++    """(i_params, f_params) for the mountains element — mirrors v1's
++    Mountains element at landtiles-style parameters (lab 4's pack)."""
++    i_params = np.array([int(p.mountains_seed), 3, 0], dtype=np.int32)
++    mask_ramp_min = -1.1 - p.mountains_coverage * 2
++    mask_ramp_max = -0.9 - p.mountains_coverage * 2
++    f_params = np.array(
++        [
++            -1.0,
++            p.mountains_min_freq,
++            p.mountains_max_freq,
++            15,
++            p.mountains_height * 2,
++            p.mountains_min_freq,
++            2,
++            mask_ramp_min,
++            mask_ramp_max,
++            0.01,
++            9,
++            p.mountains_slope_height,
++        ],
++        dtype=np.float32,
++    )
++    return i_params, f_params
++
++
++def _rocks_pack(p: TerrainMeshParams):
++    i_params = np.array([int(p.rocks_seed), 0], dtype=np.int32)
++    f_params = np.array(
++        [
++            3.0,
++            0.06,
++            0.1,
++            15,
++            p.rocks_content_scale,
++            0.1,
++            0.15,
++            3,
++            p.rocks_warp_scale,
++            0.02,
++            5,
++            p.rocks_slope_scale,
++            0.0,
++        ],
++        dtype=np.float32,
++    )
++    return i_params, f_params
++
++
++def _camera_pose_k(p: TerrainMeshParams, width: int, height: int):
++    """The (pose, K) the OcMesher drives its LOD with — the same convention
++    lab 4 used (camera axes as the rotation's columns, world up = +Z), with
++    the placement parameterized by the grammar's draws."""
++    horiz = np.array([math.sin(p.camera_azimuth), -math.cos(p.camera_azimuth)])
++    C = np.array([*horiz * p.camera_distance, p.camera_height])
++    look = -horiz
++    dirv = np.array([look[0], look[1], -math.tan(p.camera_pitch)])
++    dirv /= np.linalg.norm(dirv)
++    world_up = np.array([0.0, 0.0, 1.0])
++    right = np.cross(world_up, dirv)
++    right /= np.linalg.norm(right)
++    up = np.cross(dirv, right)
++    pose = np.eye(4)
++    pose[:3, 0], pose[:3, 1], pose[:3, 2], pose[:3, 3] = right, up, dirv, C
++    fx = p.focal_length_mm / _SENSOR_WIDTH_MM * width
++    K = np.array([[fx, 0, width / 2], [0, fx, height / 2], [0, 0, 1]])
++    return pose, K, C, dirv
++
++
++#: the block the fixed scene meshes: xmin, xmax, ymin, ymax, zmin, zmax
++MESH_BOUNDS = np.array([-30.0, 30.0, -30.0, 30.0, -5.0, 15.0])
++
++
++def _ocmesher():
++    import sys
++
++    if str(_OCMESHER_PATH) not in sys.path:
++        sys.path.insert(0, str(_OCMESHER_PATH))
++    from ocmesher import OcMesher  # noqa: PLC0415
++
++    return OcMesher
++
++
++# ---------------------------------------------------------------------------
++# the realized compute
++# ---------------------------------------------------------------------------
++
++
++def _mesh_arrays_to_bpy(name: str, verts: np.ndarray, faces: np.ndarray) -> pf.MeshObject:
++    mesh = bpy.data.meshes.new(name)
++    mesh.from_pydata(
++        np.asarray(verts, dtype=np.float64).tolist(), [], np.asarray(faces, dtype=np.int64).tolist()
++    )
++    mesh.update()
++    mesh.polygons.foreach_set("use_smooth", np.ones(len(mesh.polygons), dtype=bool))
++    obj = bpy.data.objects.new(name, mesh)
++    bpy.context.scene.collection.objects.link(obj)
++    return pf.MeshObject(obj)
++
++
++def run_terrain_mesher(
++    p: TerrainMeshParams,
++    elements: list,
++    width: int = 1280,
++    height: int = 720,
++    bounds: np.ndarray | None = None,
++):
++    """Run the real OcMesher over the given SDF elements; return the meshes.
++
++    ``elements`` is a list of callables in the mesher's kernel ABI — Warp or
++    CPU adapters, so the identical call verifies one against the other.
++    """
++    if bounds is None:
++        bounds = MESH_BOUNDS
++    pose, K, _C, _d = _camera_pose_k(p, width, height)
++    OcMesher = _ocmesher()
++    mesher = OcMesher(
++        ([pose], [K], [height], [width]),
++        np.asarray(bounds, dtype=np.float64),
++        pixels_per_cube=p.pixels_per_cube,
++    )
++    meshes, in_view = mesher(list(elements))
++    return meshes, in_view
++
++
++@pf.tracer.primitive
++def terrain_mesh(
++    params: TerrainMeshParams,
++    width: int = 1280,
++    height: int = 720,
++) -> list:
++    """Mesh the two-element terrain with the Warp SDF evaluation.
++
++    Opaque to the tracer on purpose: the recipe records the call and the
++    grammar's parameter nodes feeding it; the octree, the GPU SDF batches and
++    the surface extraction happen here, at realization time — a re-mesh is
++    this leaf's execution.
++    """
++    m_i, m_f = _mountains_pack(params)
++    r_i, r_f = _rocks_pack(params)
++    elements = [
++        WarpSDFElement("mountains", mountains_kernel, m_i, m_f),
++        WarpSDFElement("warped_rocks", warped_rocks_kernel, r_i, r_f),
++    ]
++    meshes, _in_view = run_terrain_mesher(params, elements, width, height)
++    out = []
++    for elem, mesh in zip(elements, meshes):
++        verts = np.asarray(mesh.vertices)
++        faces = np.asarray(mesh.faces)
++        logger.info(
++            f"terrain_mesh[{elem.name}]: {len(verts):,} verts, {len(faces):,} faces "
++            f"({elem.calls} SDF batches, {elem.points:,} points, "
++            f"{elem.seconds:.2f}s on the GPU)"
++        )
++        out.append(_mesh_arrays_to_bpy(f"terrain_{elem.name}", verts, faces))
++    return out
++
++
++# ---------------------------------------------------------------------------
++# the scene generator
++# ---------------------------------------------------------------------------
++
++
++class TerrainMeshSceneResult(NamedTuple):
++    all_objects: list
++    cameras: list
++    lights: list
++    environment: Any
++    dimensions: pf.Vector
++
++
++@pf.tracer.grammar
++def terrain_mesh_scene_rand(
++    rng: pf.RNG,
++    dimensions: pf.Vector | None = None,
++    frame_start: int = 1,
++    frame_end: int = 1,
++) -> TerrainMeshSceneResult:
++    """The meshed terrain as a scene: OcMesher meshes under Hosek-Wilkie sky,
++    camera placed by the same draws that drive the mesher's LOD."""
++    from infinigen2.lighting.sky_lighting import sky_hosek_wilkie_with_sun_lamp_rand
++    from infinigen2.shaders.base_materials.granite import granite_rand
++
++    rng_params, rng_material, rng_sky = rng.spawn(3)
++    params = terrain_mesh_params_rand(rng_params)
++
++    if dimensions is None:
++        dimensions = pf.Vector((60.0, 60.0, 20.0))
++
++    meshes = terrain_mesh(params)
++
++    material = granite_rand(
++        rng_material, vector=pf.nodes.shader.geometry().position
++    )
++    from infinigen2.util.tracing import is_tracing  # noqa: PLC0415
++
++    if not is_tracing():
++        # terrain_mesh is an opaque leaf: while tracing it is a single Proxy
++        # standing for the whole mesh list, and iterating a Proxy is the
++        # round-2 traceability wall — the material lands at realization time
++        for m in meshes:
++            pf.ops.object.set_material(m, material=material)
++
++    # the camera the scene renders from is the camera the mesher LOD'd for:
++    # same draws, computed the same way, so a camera edit moves both
++    camera = pf.ops.primitives.perspective_camera(focal_length_mm=params.focal_length_mm)
++    pose, _K, C, _dirv = _camera_pose_k(params, 1280, 720)
++    from mathutils import Matrix
++
++    rot = Matrix((pose[:3, 0], pose[:3, 1], -pose[:3, 2]))  # Blender looks down -Z
++    pf.ops.object.set_transform(
++        camera,
++        location=pf.Vector(tuple(C)),
++        rotation_euler=rot.to_euler("XYZ"),
++    )
++    camera.item().name = "Camera"
++
++    sky = sky_hosek_wilkie_with_sun_lamp_rand(rng_sky)
++
++    return TerrainMeshSceneResult(
++        all_objects=meshes,
++        cameras=[camera],
++        lights=list(sky.lights),
++        environment=sky.environment,
++        dimensions=dimensions,
++    )
+--- a/src/infinigen2/manifest.json	2026-10-31 11:27:32.062205375 -0800
++++ b/src/infinigen2/manifest.json	2026-10-31 11:27:32.066205381 -0800
+@@ -1422,5 +1422,13 @@
+   {
+     "category": "Scene",
+     "name": "infinigen2.terrain.warp_mountains.terrain_scene_rand"
++  },
++  {
++    "category": "Object",
++    "name": "infinigen2.terrain.warp_mesher.terrain_mesh"
++  },
++  {
++    "category": "Scene",
++    "name": "infinigen2.terrain.warp_mesher.terrain_mesh_scene_rand"
+   }
+ ]
