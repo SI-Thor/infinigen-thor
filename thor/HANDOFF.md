@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-31 · **Repo:** `github.com/SI-Thor/infinigen-thor`
 **Branch:** `mavis/thor-analysis` @ `0d0def4c` → **PR #1** → base `thor-spike` @ `7273a88f`
-**PR state:** open · **mergeable: clean** · 18 files · +3,536 / −2
+**PR state:** open · **mergeable: clean** · 20 files · +4,336 / −11
 
 Everything below is verified against the GitHub API (commits, PR, file list,
 comments), not against a local ref or a piped exit code.
@@ -15,7 +15,7 @@ comments), not against a local ref or a piped exit code.
 |---|---|
 | **the work** | branch `mavis/thor-analysis` on `SI-Thor/infinigen-thor`, head `0d0def4c` |
 | **the review surface** | PR #1 → https://github.com/SI-Thor/infinigen-thor/pull/1 |
-| **the 18 files** | `thor/` on the branch — see §3 |
+| **the 20 files** | `thor/` on the branch — see §3 |
 | **the write-up** | `thor/THOR-MAKING-NOT-CONSUMING.md` (473 lines) |
 | **the receipts** | `thor/experiments/receipts/*.json` — committed, not local |
 | **PR comments** | 3, listed in §5 |
@@ -49,7 +49,7 @@ b0b77d8a  thor/: measure the box instead of arguing about it - probe-thor.sh and
 
 ---
 
-## 3. The 18 files in PR #1
+## 3. The 20 files in PR #1
 
 | status | +/- | file |
 |---|---|---|
@@ -71,7 +71,7 @@ b0b77d8a  thor/: measure the box instead of arguing about it - probe-thor.sh and
 | added | +57 | `thor/experiments/receipts/toy-coin-receipt.json` |
 | added | +37 | `thor/patches/blender-v4.2.0-oidn-arm64-cpu-only.patch` |
 
-**Total: +3,536 / −2 across 18 files.** The only change to Infinigen's own
+**Total: +4,336 / −11 across 20 files.** The only change to Infinigen's own
 source is `infinigen2/util/hardware_info.py` — the GPU-detection fix, which
 has a test (`tests/infinigen2/util/test_hardware_info.py`); everything else is
 under `thor/`. An earlier draft also carried a `render_cycles.py` denoiser
