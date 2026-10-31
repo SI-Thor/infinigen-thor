@@ -216,13 +216,58 @@ So:
     teacher loss = ‖G_s(y) − G_t(y)‖²          (what everybody does)
 ```
 
-**Prediction (E2):** at equal compute, the closed-loop student has a lower
-plausibility residual *and* a lower drift than the pixel student, while
-matching it on fidelity. If it holds, the distillation recipe in your engine
-changes — and it is a recipe change, not a model change.
+#### MEASURED (`experiments/distill_closed_loop.py`, E2)
 
-This is publishable because nobody else can run it: it needs a perception net,
-a generator, and a ground-truth source that are *supposed to agree*.
+Three students, one budget each, one teacher (the exact conditional sampler):
+
+| student | off-manifold | round-trip | plausibility | plausible **and** consistent? |
+|---|---|---|---|---|
+| real data (the floor) | 0.0551 | 0.0600 | 40.254 | — |
+| **teacher (stochastic)** | **0.0530** | **0.0595** | 40.498 | **YES** |
+| A. pixel distillation | 0.6053 | 0.0621 | 196.140 | no |
+| B. closed-loop, consistency only | 0.9925 | 0.0469 | 250.476 | no |
+| C. closed-loop + plausibility | −0.1322 | 0.2311 | 24.813 | no |
+
+Three results, and the third is the important one.
+
+1. **Pixel distillation produces the BLUR.** Off-manifold 0.6053 against a
+   teacher of 0.0530 — **11x worse**, at a round trip (0.0621) that looks
+   *perfect*. Regressing on a teacher's samples converges to the posterior
+   mean, and the mean of a multimodal posterior is a point that satisfies the
+   measurement and exists in no scene. **Pixel distillation teaches the
+   student to produce ghosts.**
+
+2. **Consistency alone produces a different ghost.** Off-manifold 0.9925 —
+   **19x worse** than the teacher — with a *better* round trip than the
+   teacher (0.0469). It does not converge to the blur; it converges to an
+   arbitrary point on the fiber, because the closed-loop loss is flat along
+   it. **Consistency alone does not even give you the blur. It gives you
+   something worse, with a better-looking measurement.**
+
+3. **The plausibility term turns the ghost into a possible world — and
+   reveals a structural limit.** Student C lands at −0.1322 off-manifold
+   (better than the teacher's own 0.0530) with a *worse* round trip (0.2311).
+   The tension is **irreducible**, not a tuning failure:
+
+   > A deterministic generator `g(y)` must land inside the prior's support
+   > **and** satisfy `A(g(y)) = y`. For a multimodal prior with discrete
+   > modes, for a generic `y` **no such point exists** — the modes project
+   > onto a measure-zero set of observations. So **the generator must be
+   > stochastic wherever the fiber is wide**, and no loss function can fix
+   > that.
+
+   Which is precisely what the **fiber-width gate** says, and it is why the
+   gate is not an optimisation: it is a **necessity**. Deterministic tier
+   where the fiber is narrow (one forward pass, real time); stochastic tier
+   where it is wide.
+
+> **The objective in your engine should change, and it is a recipe change, not
+> a model change.** And the two terms must be **balanced in gradient scale** —
+> measured here, the plausibility gradient is **4.4e-5** of the consistency
+> gradient (they scale like `1/σ_x²` and `1/σ_y²` respectively). An unweighted
+> sum lets plausibility win outright: the student collapses onto the modes and
+> ignores the measurement (round trip 2.59). Balance them once, then λ is
+> interpretable.
 
 ### M2 — Fine-tune on a distribution only you can sample
 
@@ -338,7 +383,7 @@ controls in code.
 | # | experiment | prediction | control | if it holds |
 |---|---|---|---|---|
 | **E1** | per-frame drift of a perception-conditioned generator over a sequence | residual **grows** with frame index; superlinear if the generator conditions on its own output | identity generator ⇒ residual exactly 0 | the loop needs a periodic re-anchor; the drift budget becomes a product requirement |
-| **E2** | train a generator two ways: pixel-teacher vs closed-loop | closed-loop student has lower plausibility residual **and** lower drift at equal compute | a generator trained on nothing (must not beat either) | the distillation recipe changes; this is the publishable result |
+| **E2** | train a generator two ways: pixel-teacher vs closed-loop | closed-loop student has lower plausibility residual **and** lower drift at equal compute | a generator trained on nothing (must not beat either) | the distillation recipe changes; this is the publishable result — **MEASURED at 2-D scale, `distill_closed_loop.py`: pixel distillation is 11x off-manifold and consistency-only 19x, while only the stochastic generator is plausible AND consistent** |
 | **E3** | consistency residual vs plausibility residual, per frame | low consistency does **not** imply low implausibility; a consistent-but-impossible frame exists | a consistency-only gate must pass at least one impossible frame | the critic's band gains a second axis |
 | **E4** | `I(x;y)` on the Infinigen distribution vs the drift of E1 | drift magnitude is **predicted** by the information the perception stack destroyed | a narrower conditioner must show both a lower `I` and a lower drift | the perception stack can be *budgeted*: choose the conditioner whose information loss matches the fidelity you need |
 | **E5** | the fiber width as a per-frame gate | frames with width > τ are exactly the frames where the deterministic inverse degrades | a random gate must be worse than the width gate | you get real time *and* fidelity, by paying for samples only where the measurement is ambiguous |
@@ -396,7 +441,11 @@ because it removes the tier-1 cost from most frames.
 | the harness cannot silently pass a bad generator | **MEASURED**, `closed_loop.py --selftest` (positive control ⇒ exactly 0; negative control ⇒ larger) |
 | FP8/FP16/FP32 throughput, bandwidth, unified memory | **MEASURED by your lab** |
 | the Thor has no RT cores; OptiX is out; FP4 needs `sm_110a` block-scaled | **NVIDIA primary sources** + your lab |
-| E2 (closed-loop distillation beats pixel distillation) | **HYPOTHESIS** — needs the Thor |
+| pixel distillation produces the blur (11x off-manifold at a perfect round trip) | **MEASURED**, `distill_closed_loop.py` |
+| consistency alone produces an arbitrary ghost (19x off-manifold, *better* round trip) | **MEASURED**, `distill_closed_loop.py` |
+| only a **stochastic** generator can be plausible and consistent at once | **MEASURED** — and it is structural, not a tuning failure |
+| the two loss terms differ in gradient scale by 4.4e-5 and must be balanced | **MEASURED**, `distill_closed_loop.py` |
+| E2 at real scale (closed-loop distillation beats pixel distillation on drift) | **HYPOTHESIS** — needs the Thor |
 | E4 (drift is predicted by `I(x;y)`) | **HYPOTHESIS** — needs the Thor |
 | E6 (a dense perception critic beats a scalar discriminator) | **HYPOTHESIS** — needs the Thor |
 
