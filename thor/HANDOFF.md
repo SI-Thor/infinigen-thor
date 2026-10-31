@@ -120,6 +120,25 @@ sampler mean **0.0135**, spread **0.9 %**; sharper prior ⇒ narrower fiber.
 Positive control (identity ⇒ residual exactly 0) and negative control
 (identity + ε ⇒ residual must grow). Aborts if either fails.
 
+### `test_closed_loop.py` — **ALL PASS** (5/5)
+End-to-end against a directory built with the **real** Infinigen layout
+(`<camera>/depth_0001.npy`, `<camera>/object_0001.npy`, `<camera>/0001.png` —
+`%c` = camera name, `%f` = `f"{frame:04d}"`, from
+`src/infinigen2/exporters/util/format.py`). Against the loader as first
+committed: **4 of 5 fail** (it found 0 frames and reported *"no frames
+found"*; the object-index metric returned 0.0 for two different label maps;
+the CLI exited 2). Three further defects fell out of it: the object index is
+a **label map**, not one-hot; **every metric must be an error** (the RGB
+metric was a PSNR, so "identity ⇒ exactly 0" was unsatisfiable); and a bad
+generator must corrupt the **integer** passes too, or the negative control
+reports "nothing changed" for a broken generator.
+
+### `test_hardware_info.py` — **ALL PASS** (7/7)
+GPU detection, with a fake `nvidia-smi` on PATH. Against the old code: 3 fail
+for the real reasons (the GPU is lost when the driver rejects
+`memory.total`; the Thor/Orin entries carry a literal `[N/A]`), and the
+dGPU-format test passes against **both**, because that format must not change.
+
 ### The finding
 
 > `minimise ‖A(G(y)) − y‖` alone **certifies physically impossible worlds.**

@@ -55,39 +55,104 @@ import numpy as np
 # ---------------------------------------------------------------------------
 MODALITIES = ("rgb", "depth", "flow", "obj_index", "semantic_seg")
 
+# The REAL Infinigen output layout, from
+# src/infinigen2/exporters/util/format.py:
+#
+#     ExportType.IMAGE          Path("%c/%f.png")              uint8
+#     ExportType.DEPTH          Path("%c/depth_%f.npy")        float32
+#     ExportType.OPTICAL_FLOW   Path("%c/optical-flow_%f.npy") float32
+#     ExportType.OBJECT_INDEX   Path("%c/object_%f.npy")       uint32
+#     ExportType.SURFACE_NORMAL Path("%c/surface-normal_%f.npy") float32
+#
+# with  %c -> the camera name (a SUBDIRECTORY)  and  %f -> f"{frame:04d}".
+# So a render lands as:
+#
+#     <output>/<camera>/0001.png
+#     <output>/<camera>/depth_0001.npy
+#     <output>/<camera>/optical-flow_0001.npy
+#     <output>/<camera>/object_0001.npy
+#
+# A loader that globs the top level for "rgb_*.png" and "*obj_index*.npy"
+# finds NOTHING on a real output and reports "no frames found" - which reads
+# like a data problem and is actually a loader problem.
+
+#: filename stem -> modality key
+_PASS_STEMS = {
+    "depth": "depth",
+    "optical-flow": "flow",
+    "flow": "flow",
+    "object": "obj_index",
+    "obj-index": "obj_index",
+    "surface-normal": "normal",
+    "surface-normal-world": "normal_world",
+    "material-index": "material_index",
+}
+_IMAGE_STEMS = {"image-denoised": "rgb_denoised"}
+
+
+def _frame_number(stem):
+    """The frame number out of a filename STEM ("depth_0001" -> 1).
+
+    Infinigen writes %f as f"{frame:04d}", so the number is the trailing
+    digits of the stem.  It may be followed by a viewlayer suffix on some
+    passes, so take the LAST digit group."""
+    m = re.search(r"(\d+)$", stem)
+    return int(m.group(1)) if m else None
+
+
 def load_frames(source, limit=None):
-    """Read an Infinigen render directory's ground-truth passes, indexed by
-    frame number.  Infinigen writes depth_0001.npy, optical_flow_0001.npy,
-    obj_index_0001.npy, semantic_seg_0001.png, rgb_0001.png."""
+    """Read an Infinigen render directory's passes, indexed by (camera, frame).
+
+    Walks the tree, because the passes live one directory down, under the
+    camera name."""
     index = {}
-    for pat, key in (("*depth*.npy", "depth"), ("*flow*.npy", "flow"),
-                     ("*obj_index*.npy", "obj_index"), ("*seg*.npy", "semantic_seg"),
-                     ("*depth*.exr", "depth"), ("*flow*.exr", "flow")):
-        for p in glob.glob(os.path.join(source, pat)):
-            m = re.search(r"(\d+)(?=\.[a-z]+$)", os.path.basename(p))
-            if not m: continue
-            index.setdefault(int(m.group(1)), {})[key] = p
-    for p in glob.glob(os.path.join(source, "*.png")):
-        b = os.path.basename(p)
-        m = re.search(r"(\d+)\.png$", b)
-        if not m: continue
-        fr = int(m.group(1))
-        key = "rgb" if b.startswith("rgb") else ("semantic_seg" if "seg" in b else None)
-        if key: index.setdefault(fr, {})[key] = p
+    for root, _dirs, files in os.walk(source):
+        camera = os.path.basename(os.path.normpath(root))
+        for fn in files:
+            stem, ext = os.path.splitext(fn)
+            ext = ext.lower()
+            if ext not in (".npy", ".png", ".exr"):
+                continue
+            frame = _frame_number(stem)
+            if frame is None:
+                continue
+            key = None
+            if ext == ".npy":
+                # "depth_0001" -> "depth";  "object_0001" -> "object"
+                base = re.sub(r"_\d+$", "", stem)
+                key = _PASS_STEMS.get(base)
+            else:
+                if stem.isdigit():
+                    key = "rgb"                 # "%c/%f.png" is the main image
+                else:
+                    base = re.sub(r"_\d+$", "", stem)
+                    key = _IMAGE_STEMS.get(base)
+            if key is None:
+                continue
+            index.setdefault((camera, frame), {})[key] = os.path.join(root, fn)
+
     if not index:
         return []
     frames = []
-    for fr in sorted(index):
-        if limit and len(frames) >= limit: break
+    for k in sorted(index):
+        if limit and len(frames) >= limit:
+            break
         d = {}
-        for key, path in index[fr].items():
-            d[key] = read_any(path)
-        if d: frames.append(d)
+        for key, path in index[k].items():
+            arr = read_any(path)
+            if arr is not None:
+                d[key] = arr
+        if d:
+            frames.append(d)
     return frames
 
+
 def read_any(path):
+    """Load a pass WITHOUT flattening its dtype.  object index is uint32 and
+    rgb is uint8; casting them to float32 here loses the type information a
+    caller may need, and the metrics cast for themselves."""
     if path.endswith(".npy"):
-        return np.load(path).astype(np.float32)
+        return np.load(path)
     if path.endswith(".exr"):
         try:
             import imageio.v3 as iio
@@ -103,8 +168,14 @@ def read_any(path):
     return None
 
 def metric(name, a, b):
-    """residual between generated `a` and target `b` for one modality."""
+    """The ERROR between generated `a` and target `b` for one modality.
+
+    EVERY metric here is an error, so LOWER IS BETTER, without exception.
+    (A PSNR would be the opposite direction, and a residual dict that mixes
+    the two cannot carry a control like "identity must give exactly 0".)"""
     if a is None or b is None: return None
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
     if a.shape != b.shape:
         n = min(a.size, b.size)
         a = a.reshape(-1)[:n]; b = b.reshape(-1)[:n]
@@ -114,13 +185,17 @@ def metric(name, a, b):
         return float(np.abs(a[m] - b[m]).mean() / max(np.abs(b[m]).mean(), 1e-6))
     if name in ("flow",):
         return float(np.linalg.norm(a - b, axis=-1).mean())
-    if name in ("obj_index",):
-        return float((a.argmax(-1) != b.argmax(-1)).mean())
-    if name in ("semantic_seg",):
-        return float((a.argmax(-1) != b.argmax(-1)).mean())
-    if name in ("rgb",):
-        mse = float(((a - b) ** 2).mean())
-        return float(-10 * np.log10(max(mse, 1e-12) / (255.0 ** 2)))
+    if name in ("obj_index", "semantic_seg", "material_index"):
+        # Infinigen writes these as LABEL MAPS (H,W) uint32, not one-hot.
+        # argmax(-1) on a label map is meaningless, and on a 1-channel array
+        # it silently compares channel 0 against itself.
+        if a.ndim == 3 and a.shape[-1] > 1:
+            a = a.argmax(-1)
+            b = b.argmax(-1)
+        return float((a != b).mean())
+    if name in ("rgb", "rgb_denoised"):
+        # RMSE in 0-255 units.  An error, like every other metric here.
+        return float(np.sqrt(((a - b) ** 2).mean()))
     return float(np.abs(a - b).mean())
 
 # ---------------------------------------------------------------------------
@@ -137,6 +212,12 @@ class IdentityGenerator:
         return [dict(o) for o in obs]
 
 class NoisyGenerator(IdentityGenerator):
+    """A generator that corrupts EVERYTHING, including the integer passes.
+
+    (A bad generator corrupts the object index too.  Perturbing only the
+    floating arrays would leave the label maps bit-exact, and the control
+    would then report "the noise did not change anything" for a generator
+    that is plainly broken.)"""
     name = "stub:noisy-generator"
     eps = 0.05
     def generate(self, obs, history=None):
@@ -144,8 +225,10 @@ class NoisyGenerator(IdentityGenerator):
         for o in obs:
             d = dict(o)
             for k in list(d):
-                if d[k] is not None and np.issubdtype(np.asarray(d[k]).dtype, np.floating):
-                    d[k] = np.asarray(d[k], dtype=np.float32) + self.eps * np.random.randn(*np.shape(d[k]))
+                if d[k] is not None and np.issubdtype(
+                        np.asarray(d[k]).dtype, np.number):
+                    d[k] = (np.asarray(d[k], dtype=np.float32)
+                            + self.eps * np.random.randn(*np.shape(d[k])))
             out.append(d)
         return out
 
