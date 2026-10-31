@@ -332,3 +332,117 @@ signal · `73b0553a` parity stats mode · `4b393677` concurrency script fix.
   the full deps prefix for aarch64 is its own project).
 - The seed sweep's own results (spread per scene type × seed) live in
   `outputs/sweep/sweep.tsv` — worth a digest once the workers finish.
+
+---
+
+# Phase 3 (2026-10-31): `fine_terrain` made deterministic
+
+Box state: the overnight seed sweep was still running (CPU renders through
+`.venv`, untouched); every phase-3 experiment ran in `.venv-p2` against the
+same fixed coarse input (`outputs/p2/desert/coarse`, seed 0, dev/fast-terrain
+configs, `--task fine_terrain` only — populate removed from the equation so
+the only moving part is terrain generation + meshing). Logs under
+`outputs/logs/p3-*`.
+
+## 1. Reproducing it, then shrinking it
+
+- **E1 (fixed input, 3×CPU + 3×CUDA, pre-fix):** `OpaqueTerrain_fine`
+  wobbles by 485287/485121/487806 (CPU) and 487255/485603/487945 (CUDA)
+  vertices; the other 8 terrain objects stay bit-identical. So neither
+  populate nor the camera is involved.
+- **E5 (`thor/p3_mesher_only.py`, minimal repro):** driving
+  `CubeSphericalMesher`/`FrontviewSphericalMesher` directly with a pure
+  numpy sphere SDF (zero pipeline), vertex *counts* are stable but the
+  *raw* vertex order differs every run — the mesher itself is
+  order-nondeterministic, and with a noise-free kernel that costs no
+  geometry.
+- **E3 (`thor/p3_kernels.py order`):** the real desert kernels
+  (ground/landtiles/warped_rocks/voronoi_rocks) are **bitwise
+  order- and batch-size-invariant per point**, on CPU *and* CUDA — the
+  SDF is a pure function of position; the element constructors are
+  `FixedSeed`-scoped and process-stable.
+- **Bisecting probe (`thor/p3_kernels.py probe`):** hashing every stage
+  (element params, camera, all 180 kernel batches, final mesh) in two
+  processes: the background mesher is deterministic end to end; the
+  front-view mesher diverges from batch 1 (same size, different order —
+  expected), and then the frontier *sizes* diverge (e.g. 547 vs 548
+  blocks) — the processed block **set** changes, which is what moves
+  vertex counts.
+- **`OMP_NUM_THREADS=1`, two processes:** every hash and both meshes
+  byte-identical — the whole effect is OpenMP thread-scheduling order.
+
+## 2. Root cause
+
+Two layers, both in the CPU meshing C++ (meshing is CPU-only on both
+device arms; `Terrain.device` only picks who evaluates the SDF):
+
+1. **Vertex-order nondeterminism (all three meshers).** The block
+   frontier (`newfound`) is appended under `#pragma omp critical`
+   (`initial_update`/`get_cnt`/`finefront_*` in
+   `cube_spherical_mesher.cpp`, `frontview_spherical_mesher.cpp`,
+   `uniform_mesher.cpp`), so its order — and with it the vertex/face
+   append order — follows thread scheduling. `make_unique()`
+   (np.lexsort) canonicalizes the saved object, which is why phase 2's
+   other 8 objects looked stable: this layer alone changes no geometry.
+2. **Geometry nondeterminism (the count wobble).**
+   `visibility_test.cpp:compute_face_order` prepends faces into depth
+   buckets under `omp critical`; same-depth order is therefore random.
+   The convex-hull visibility rasterizer that consumes those buckets is
+   order-sensitive at depth ties, its answers gate fine-block discovery
+   (`fine_pretest::update(...)`), and a handful of marginal blocks flip
+   in/out — a different block **set** gets meshed. That is the
+   100–2200-vertex wobble phase 2 measured. (`extend::adj_table_fillup`
+   additionally had a real race — slot allocated under one critical,
+   linked under another.)
+
+## 3. The fix (5 files, `terrain/source/cpu/meshing/`)
+
+Same rule everywhere: parallel compute stays, shared-order appends become
+canonical — no atomics-order dependence left.
+
+- `compute_face_order`: per-face bucket/pixel computed in parallel with
+  no shared writes, then buckets filled **serially in face-index order**
+  (stable). This is the fix that stabilizes vertex *sets*.
+- Frontier collection (`initial_update`, `get_cnt`, `finefront_init`,
+  `finefront_get_cnt` in all three meshers): flags still computed under
+  `omp parallel for`, collection is a serial scan in index order.
+- The front-view hash-table `fine_pretest::get_cnt` keeps its parallel
+  bucket scan but now **sorts the frontier lexicographically** (new
+  `sort_triples` in `utils.cpp`) before returning — canonical regardless
+  of hash layout or thread interleaving.
+- `adj_table_fillup`: serial (it was racy, and is off in the desert
+  config anyway).
+
+## 4. Proof it worked (all post-fix, 14 threads)
+
+| Check | Result |
+|---|---|
+| `thor/p3_mesher_only.py` ×4 | both meshers **bit-identical raw bytes**; canonical hashes unchanged from pre-fix (same geometry, canonical order) |
+| probe ×2 processes, MT | all stage hashes + meshes **byte-identical** |
+| **E1F2 ladder** (`thor/p3-fine-runs.sh`, `outputs/logs/p3-fine-runs-fixed2.out`) | CPU ×3 and CUDA ×3: **all 8 terrain objects bit-identical** per device (`OpaqueTerrain_fine` 484318 CPU / 484319 CUDA) |
+| Regression test | `tests/infinigen/terrain/test_mesher_determinism.py` — **fails on pre-fix libs, passes post-fix** (verified by stash-rebuild-revert) |
+| Speed, same-load A/B | fine stage **49 s pre-fix vs 49 s post-fix** (`p3-ab-pre`/`p3-ab-post`) — 0% cost; the serial scans are O(flags), the SDF batches dominate |
+
+**CPU vs CUDA:** no longer masked by run noise — the devices differ by
+**1 vertex of 484,318** (2.1e-4 relative), bbox delta 2.9e-6, mean vertex
+position delta 2.5e-4 (`thor/terrain_parity.py`, cuda-vs-cuda floor 0).
+The residual is float32 codegen of the shared element/surface kernels
+(gcc vs nvcc FMA contraction); hash-gated cross-device parity would need
+a tolerance or a device-canonicalizing step, same-device reproducibility
+is exact.
+
+## 5. Caveats
+
+- The terrain `.so` files live in the shared editable tree, so sweep
+  processes that started after the rebuild use the fixed meshers too
+  (geometry changes only at tie order; no crash, timings unaffected —
+  workers kept producing rows through the rebuild window).
+- `pytest` was installed into `.venv-p2` to run the regression test; the
+  sweep's `.venv` and the wheel remain untouched.
+- One E1F ladder was discarded: its CUDA arm overlapped a temporary
+  pre-fix rebuild during the A/B; E1F2 is the clean run reported above.
+
+## Phase 3 commits
+
+`11520989` the fix (5 meshing sources) · `618f358d` regression test ·
+`8c02d589` phase-3 tooling · plus this SPIKE/README update.

@@ -2,7 +2,7 @@
 
 > **This fork** ports [Princeton's Infinigen](https://github.com/princeton-vl/infinigen) (BSD-3) to the **NVIDIA Jetson AGX Thor**: aarch64, 14 Neoverse-V3AE cores, 122 GB unified memory, a Blackwell GPU (sm_110), CUDA 13.2. It is the world engine of [**builder-ide**](https://github.com/SI-Thor/builder-ide), where agent builders work on procedurally generated worlds overnight. Upstream's README follows below, unchanged.
 
-## Status: phase 2 done. Infinigen runs natively on the Thor (branch `thor-spike`, 2026-10-31)
+## Status: phases 2–3 done. Infinigen runs natively on the Thor (branch `thor-spike`, 2026-10-31)
 
 | What | Result |
 |---|---|
@@ -12,17 +12,18 @@
 | Hello Room (Infinigen Indoors) | **Works.** Coarse 534 s; the full 8192-spp render took 21.8 min on the GPU |
 | Hello World (Infinigen Nature, desert) | **Works.** ≈5.5 min end to end (the docs estimate ~10 min on a desktop) |
 | Cycles, same frame, 256 spp, 1280×720 | **GPU 63.4 s vs CPU (14 cores) 450.1 s: 7.1×** |
-| Terrain on the GPU | **Works** (`Terrain.device='cuda'`): fine stage **2.0× faster**; meshes indistinguishable from CPU within the stage's own run-to-run noise (which is nonzero — see SPIKE) |
+| Terrain on the GPU | **Works** (`Terrain.device='cuda'`): fine stage **2.0× faster** |
 | Concurrent GPU renders | **Fit in unified memory but don't scale**: throughput peaks at 2 jobs (+6%), falls by N=4. Pack 2. |
+| `fine_terrain` determinism | **Fixed** (phase 3): the OpenMP meshers/visibility appended in thread-scheduling order; now 3 runs per device are **bit-identical** (regression test in `tests/`), at **0% wall cost**, and CPU vs CUDA agree to 1 vertex of 484k |
 | Capability gate | `thor/probe-thor.sh` — denoiser, Cycles devices, unified memory, sm_110 SASS; non-zero exit on a gap |
 
 Full numbers, the box's state and every wall hit are in [`thor/SPIKE.md`](thor/SPIKE.md). To reproduce, run `thor/build-bpy.sh`, `thor/install.sh`, `thor/probe-thor.sh`, `thor/run-timed.sh` and the `thor/bench_*` scripts.
 
-## Known gaps (phase 3 candidates)
+## Known gaps (phase 4 candidates)
 
 - **No RT cores** in the Thor (AGX T5000), so Cycles uses CUDA, not OptiX. This is a hardware fact, not a packaging gap.
-- **`fine_terrain` is nondeterministic on the same device** (two CPU runs of one scene differ by ~0.1% of vertices). Not a GPU-port artifact — the CUDA runs sit inside the CPU runs' own spread — but it blocks hash-gated parity and reproducible GT datasets until the parallel mesher is made deterministic.
 - This branch installs Infinigen **1.x** (`[infinigen1,terrain]`). Upstream main is **2.0** (`infinigen2`), and in 2.0 terrain is a v1 feature. The engine choice (1.x, 2.0 + procfunc, or 2.0 with Thor-native stages) is being studied in builder-ide.
+- CPU-vs-CUDA terrain is **not** hash-identical (1 vertex of 484k apart; gcc vs nvcc float32 codegen of the shared kernels) — fine for datasets, but a hash-gated cross-device gate would need a device canonicalization or a tolerance.
 - Generation is mostly single-threaded Python (≈2 of 14 cores busy), so the Thor-native wins lie elsewhere:
   - warm scenes;
   - 2 packed GPU renders + CPU work beside them (more render processes do not help — measured);
