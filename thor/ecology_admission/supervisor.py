@@ -9,6 +9,14 @@ keeps the WHY ledger, and decides:
   * what happens then (SIGUSR1 -> --on_interrupt checkpoint -> park),
   * who may revive (explicit, on parole).
 
+The memory axis is not ours: since builder-ide's ``thor-admit`` landed,
+the box has a memory admission daemon (kernel-held leases, the 250 ms
+watchdog, learned peaks). We compose with it once per admission — the
+auction decides a job is worth its GPU-seconds, then the supervisor
+asks thor-admit whether the box has room for its peak
+(:mod:`.lease`). A lease refused is not a scheduling failure: the job
+stays queued and its purpose stays fresh.
+
 The dry-run mode (`enforcing=False`, the default in the simulator) makes
 it a pure logger of *decisions* — safe to run against a live batch.
 """
@@ -18,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from .lease import LEASE_PRIORITY, LeaseClient, RecordingLeaseClient
 from .ledger import WhyLedger, WhyState
 
 IMPORTANCE = {"kernel": 3, "world": 2, "scenery": 1, "maintenance": 0}
@@ -61,6 +70,7 @@ class Job:
     importance: str = "world"
     pid: Optional[int] = None  # None until launched (dry-run keeps None)
     checkpointed: bool = False
+    lease_id: Optional[int] = None  # thor-admit lease while running
 
 
 @dataclass
@@ -91,6 +101,7 @@ class Supervisor:
         rails_refill_per_period: float = 4.0,
         max_admitted: int = 6,
         enforcing: bool = False,
+        lease_client: Optional[LeaseClient] = None,
     ):
         self.ledger = WhyLedger(
             horizon=horizon, deadline_grace=deadline_grace, cascade_budget=cascade_budget
@@ -101,6 +112,10 @@ class Supervisor:
         )
         self.max_admitted = max_admitted
         self.enforcing = enforcing
+        # The memory axis: thor-admit's, by lease. The default records what
+        # we would have leased (shadow mode); enforcing mode passes the real
+        # client and a refused lease leaves the job queued.
+        self.leases: LeaseClient = lease_client or RecordingLeaseClient()
         self.jobs: Dict[int, Job] = {}  # ledger_id -> Job
         self.running: List[int] = []  # ledger ids currently admitted
         self.decisions: List[Decision] = []
@@ -144,11 +159,14 @@ class Supervisor:
         return False
 
     def job_done(self, name: str, now: int) -> bool:
-        """Job succeeded: withdraw its bid, free its slot."""
+        """Job succeeded: withdraw its bid, free its slot, release the lease."""
         for jid, job in self.jobs.items():
             if job.name == name:
                 if jid in self.running:
                     self.running.remove(jid)
+                if job.lease_id is not None:
+                    self.leases.release(job.lease_id)
+                    job.lease_id = None
                 return self.ledger.run_under(jid, now) > 0
         return False
 
@@ -213,6 +231,20 @@ class Supervisor:
             if not self.rails.afford(rail_cost):
                 report.skipped_infeasible += 1
                 continue
+            # The memory axis, once per admission: the auction has decided
+            # the job is worth its GPU-seconds; now does the box have room
+            # for its peak? A refusal is not a scheduling failure — the job
+            # stays queued, its purpose stays fresh.
+            grant = self.leases.acquire(
+                label=job.name, peak="auto", priority=LEASE_PRIORITY[job.importance]
+            )
+            if not grant.ok:
+                self.decisions.append(
+                    Decision(now, "lease", job.name, f"thor-admit refused: {grant.reason}")
+                )
+                report.skipped_infeasible += 1
+                continue
+            job.lease_id = getattr(grant, "lease_id", None)
             self.rails.spend(rail_cost)
             self.running.append(jid)
             report.admitted.append(job.name)
@@ -223,7 +255,12 @@ class Supervisor:
                     now,
                     "admit",
                     job.name,
-                    f"score={score:.3f} class={job.importance} cost={cost:.1f}gpu-s",
+                    f"score={score:.3f} class={job.importance} cost={cost:.1f}gpu-s"
+                    + (
+                        f" lease={job.lease_id}"
+                        if job.lease_id is not None
+                        else ""
+                    ),
                 )
             )
         return report
@@ -240,6 +277,11 @@ class Supervisor:
                 os.kill(job.pid, signal.SIGUSR1)  # infinigen checkpoints & exits
             except ProcessLookupError:
                 pass
+        if job.lease_id is not None:
+            # The lease goes back while the job is parked: a checkpointed job
+            # holds no memory it isn't using. Revive asks for a new lease.
+            self.leases.release(job.lease_id)
+            job.lease_id = None
         job.checkpointed = True
         self.decisions.append(
             Decision(

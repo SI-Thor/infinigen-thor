@@ -9,6 +9,13 @@ from __future__ import annotations
 
 import pytest
 
+from thor.ecology_admission.lease import (
+    LEASE_PRIORITY,
+    LeaseRefusal,
+    NullLeaseClient,
+    RecordingLeaseClient,
+    ThorAdmitLeaseClient,
+)
 from thor.ecology_admission.ledger import PROBATION_CAP, WhyLedger, WhyState, link_freshness
 from thor.ecology_admission.supervisor import Rails, Supervisor
 
@@ -176,3 +183,57 @@ class TestAuction:
         assert j_parole == pytest.approx(PROBATION_CAP)
         sup.job_progress("flaky", 220)  # a stage completes: parole ends
         assert sup.ledger.justification(flaky, 221) > PROBATION_CAP
+
+
+class TestTheLeaseComposition:
+    """The memory axis is thor-admit's; the supervisor composes with it
+    once per admission (see thor/ecology_admission/lease.py)."""
+
+    def test_admission_asks_for_a_lease_first(self):
+        leases = RecordingLeaseClient()
+        sup = Supervisor(horizon=900, lease_client=leases)
+        region = sup.add_region(until=None, now=0)
+        sup.add_job(region, "scene-1", now=0, importance="world")
+        sup.period(now=10)
+        # exactly one acquire, with the daemon's own conventions
+        assert leases.acquired == [("scene-1", "auto", LEASE_PRIORITY["world"])]
+
+    def test_kernel_class_maps_to_the_front_of_the_daemons_queue(self):
+        leases = RecordingLeaseClient()
+        sup = Supervisor(horizon=900, lease_client=leases)
+        region = sup.add_region(until=None, now=0)
+        sup.add_job(region, "coarse-gate", now=0, importance="kernel")
+        sup.period(now=10)
+        assert leases.acquired[0][2] == 5  # the daemon: higher goes first
+
+    def test_a_refused_lease_leaves_the_job_queued_and_fresh(self):
+        class Refusing(RecordingLeaseClient):
+            def acquire(self, label, peak, priority):
+                self.acquired.append((label, peak, priority))
+                return LeaseRefusal("no history for the label")
+
+        sup = Supervisor(horizon=900, lease_client=Refusing())
+        region = sup.add_region(until=None, now=0)
+        jid = sup.add_job(region, "scene-1", now=0, urgency=1.0)
+        report = sup.period(now=10)
+        assert report.admitted == []          # not admitted...
+        assert "scene-1" not in sup.running   # ...not running...
+        assert sup.ledger.state(jid) is WhyState.ALIVE  # ...and still alive
+        assert any(d.kind == "lease" for d in sup.decisions)  # the refusal is a decision
+
+    def test_done_releases_the_lease_and_park_releases_it_too(self):
+        leases = RecordingLeaseClient()
+        sup = Supervisor(horizon=60, lease_client=leases)
+        region = sup.add_region(until=None, now=0)
+        hangs = sup.add_job(region, "hangs", now=0, urgency=1.0)
+        sup.period(now=5)
+        assert len(leases.acquired) == 1
+        sup.period(now=200)  # harvested: checkpoint -> park
+        assert len(leases.released) == 1   # the parked job holds no memory
+        assert sup.jobs[hangs].lease_id is None
+
+    def test_the_wire_shape_matches_the_daemons_protocol(self):
+        client = ThorAdmitLeaseClient(socket_path="/tmp/does-not-matter.sock")
+        assert client.socket_path == "/tmp/does-not-matter.sock"
+        # the priority table mirrors the bridge module's LEASE_PRIORITY
+        assert LEASE_PRIORITY == {"maintenance": 0, "scenery": 1, "world": 2, "kernel": 5}

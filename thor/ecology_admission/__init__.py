@@ -5,6 +5,15 @@ thor/proposals/ecology-admission.md). Pure Python; transparently uses the
 compiled ecology_thor wheel when present, otherwise the local mirror.
 """
 
+from .lease import (
+    LEASE_PRIORITY,
+    LeaseClient,
+    LeaseGrant,
+    LeaseRefusal,
+    NullLeaseClient,
+    RecordingLeaseClient,
+    ThorAdmitLeaseClient,
+)
 from .ledger import PROBATION_CAP, WhyLedger, WhyState, link_freshness
 from .supervisor import AdmissionReport, Decision, Job, Rails, Supervisor
 
@@ -18,4 +27,11 @@ __all__ = [
     "Job",
     "Rails",
     "Supervisor",
+    "LEASE_PRIORITY",
+    "LeaseClient",
+    "LeaseGrant",
+    "LeaseRefusal",
+    "NullLeaseClient",
+    "RecordingLeaseClient",
+    "ThorAdmitLeaseClient",
 ]

@@ -143,4 +143,65 @@ microseconds instead of milliseconds, 100k-job arenas.
    your measured p50 render time × the concurrency you actually want;
    better ideas welcome.
 
+---
+
+## Addendum (2026-11-01): the memory axis found its owner, and it is not us
+
+Since this proposal was written, builder-ide's `thor-admit` branch
+built the box's **memory admission daemon**: kernel-held leases a dead
+client cannot leak, a 250 ms watchdog that stops the largest lease long
+before the kernel OOMs, and learned peaks (the p95 of a label's
+history) that feed the cost model's memory column. It is good, and it
+changes one thing in this proposal:
+
+**The supervisor's `opportunity` factor no longer guesses at memory.**
+Where §2 above said "the auction discovers the concurrent-render
+ceiling empirically," the ceiling now has an owner: the supervisor asks
+thor-admit for a lease at the moment of admission, and the daemon
+answers with the box's actual headroom and the label's learned peak.
+The composition happens exactly once per admission:
+
+```
+the auction:      is this job worth its GPU-seconds?      (ours)
+                       │ a winning bid
+                       ▼
+thor-admit:       does the box have room for its peak?    (theirs)
+                       │ lease granted, kernel-held
+                       ▼
+the supervisor:   spawn; heartbeat; stall → UNKNOWN → checkpoint → park
+```
+
+A lease refused is **not** a scheduling failure — the job stays queued,
+its purpose stays fresh, and it is first in line when the box drains.
+A job parked by the harvest releases its lease (a checkpointed job
+holds no memory it isn't using); a revive asks for a new one.
+
+**What landed on this branch to match:** `thor/ecology_admission/lease.py`
+— the client half: `NullLeaseClient` (dry-run), `RecordingLeaseClient`
+(shadow mode — logs what we *would* have leased; now the supervisor's
+default, so the sim's decisions above carry their lease ids),
+`ThorAdmitLeaseClient` (the daemon's JSON-over-unix-socket protocol,
+stdlib only). The supervisor calls `acquire` after the rails check and
+`release` on done/park; five new tests pin the composition
+(`TestTheLeaseComposition`), including the one that matters most:
+*a refused lease leaves the job queued and its purpose ALIVE*.
+
+**And the honest note on overlap.** The original proposal's "attention
+admission" and thor-admit's "memory admission" overlap in the word
+*admission* only; but our supervisor prototype as first written had no
+memory story at all, and that was a gap. The two systems are being
+baked off on the overlapping part (same tests, both daemons: three
+30 GiB hogs serialised; a runaway stopped before MemAvailable hits
+2 GiB; daemon overhead) — harness and protocol in the ecology-thor
+repo, `docs/BAKEOFF.md` there. Whatever wins, the ecology's
+contribution to thor-admit is the part we would keep either way: the
+chain-hashed decision journal, so every admission, stop and kill is a
+replayable WHY transition instead of a correlated log hunt.
+
+*The one thing we still own that thor-admit does not: a stall is not
+a memory problem.* A job can hold its lease, make no progress for an
+hour, and never trip a byte-based watchdog. The freshness slide →
+UNKNOWN → checkpoint → park → revive-on-parole path is the purpose
+axis, and it remains this proposal's center.
+
 — the ecology-thor team
